@@ -653,6 +653,7 @@ func main() {
 			admin := auth.Group("/admin")
 			admin.Use(adminMiddleware())
 			{
+				admin.GET("/metrics", adminMetricsHandler)
 				admin.GET("/users", listUsersHandler)
 				admin.GET("/users/:id/history", userHistoryHandler)
 				admin.PUT("/users/:id/role", updateUserRoleHandler)
@@ -981,6 +982,30 @@ func migrate(useSQLite bool) error {
 
 	// Add reminder_settings column to existing user_settings table (migration)
 	db.Exec(`ALTER TABLE user_settings ADD COLUMN reminder_settings TEXT;`)
+
+	var auditErr error
+	if useSQLite {
+		_, auditErr = db.Exec(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			admin_user_id INTEGER NOT NULL,
+			action TEXT NOT NULL,
+			target_user_id INTEGER,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(admin_user_id) REFERENCES users(id)
+		)`)
+	} else {
+		_, auditErr = db.Exec(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
+			id SERIAL PRIMARY KEY,
+			admin_user_id INTEGER NOT NULL,
+			action TEXT NOT NULL,
+			target_user_id INTEGER,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(admin_user_id) REFERENCES users(id)
+		)`)
+	}
+	if auditErr != nil {
+		return auditErr
+	}
 
 	log.Println("✅ Database migration completed successfully")
 	return nil
@@ -1712,6 +1737,86 @@ func adminMiddleware() gin.HandlerFunc {
 	}
 }
 
+func isPrivacyAdmin(c *gin.Context) bool {
+	claims := c.MustGet("claims").(*Claims)
+	privacyEmail := strings.TrimSpace(strings.ToLower(os.Getenv("PRIVACY_ADMIN_EMAIL")))
+	return privacyEmail != "" && strings.EqualFold(strings.TrimSpace(claims.Email), privacyEmail)
+}
+
+func auditAdminAction(c *gin.Context, action string, targetUserID interface{}) {
+	claims := c.MustGet("claims").(*Claims)
+	_, err := db.Exec(
+		`INSERT INTO admin_audit_logs (admin_user_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)`,
+		claims.UserID,
+		action,
+		targetUserID,
+		time.Now().UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		log.Printf("[AUDIT] failed to record action %q by admin %d: %v", action, claims.UserID, err)
+	}
+}
+
+func maskEmail(email string) string {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 || len(parts[0]) < 2 {
+		return "***"
+	}
+	return string(parts[0][0]) + "***@" + parts[1]
+}
+
+func maskName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Usuario"
+	}
+	runes := []rune(name)
+	return string(runes[0]) + "***"
+}
+
+func adminMetricsHandler(c *gin.Context) {
+	metrics := map[string]int{
+		"total_users":            0,
+		"regular_users":          0,
+		"nutritionists":          0,
+		"admins":                 0,
+		"assigned_users":         0,
+		"unassigned_users":       0,
+		"pending_appointments":   0,
+		"completed_appointments": 0,
+		"cancelled_appointments": 0,
+	}
+
+	queries := map[string]string{
+		"total_users":            `SELECT COUNT(*) FROM users`,
+		"regular_users":          `SELECT COUNT(*) FROM users WHERE role = 'user'`,
+		"nutritionists":          `SELECT COUNT(*) FROM users WHERE role = 'nutritionist'`,
+		"admins":                 `SELECT COUNT(*) FROM users WHERE role = 'admin'`,
+		"assigned_users":         `SELECT COUNT(*) FROM users WHERE role = 'user' AND nutritionist_id IS NOT NULL`,
+		"unassigned_users":       `SELECT COUNT(*) FROM users WHERE role = 'user' AND nutritionist_id IS NULL`,
+		"pending_appointments":   `SELECT COUNT(*) FROM appointments WHERE status IN ('scheduled', 'pending')`,
+		"completed_appointments": `SELECT COUNT(*) FROM appointments WHERE status = 'completed'`,
+		"cancelled_appointments": `SELECT COUNT(*) FROM appointments WHERE status = 'cancelled'`,
+	}
+
+	for key, query := range queries {
+		var value int
+		if err := db.QueryRow(query).Scan(&value); err != nil {
+			log.Printf("[ADMIN] metric %s unavailable: %v", key, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudieron calcular las métricas"})
+			return
+		}
+		metrics[key] = value
+	}
+
+	auditAdminAction(c, "view_metrics", nil)
+	metrics["can_view_individual_data"] = 0
+	if isPrivacyAdmin(c) {
+		metrics["can_view_individual_data"] = 1
+	}
+	c.JSON(http.StatusOK, metrics)
+}
+
 func nutritionistOrAdminMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims := c.MustGet("claims").(*Claims)
@@ -1738,21 +1843,32 @@ func listUsersHandler(c *gin.Context) {
 		if err := rows.Scan(&id, &name, &email, &role); err != nil {
 			continue
 		}
-		users = append(users, map[string]interface{}{
-			"id":    id,
-			"name":  name,
-			"email": email,
-			"role":  role,
-		})
+		user := map[string]interface{}{
+			"id":   id,
+			"role": role,
+		}
+		if isPrivacyAdmin(c) {
+			user["name"] = name
+			user["email"] = email
+		} else {
+			user["name"] = maskName(name)
+			user["email"] = maskEmail(email)
+		}
+		users = append(users, user)
 	}
 
 	if users == nil {
 		users = []map[string]interface{}{}
 	}
+	auditAdminAction(c, "view_user_directory", nil)
 	c.JSON(http.StatusOK, users)
 }
 
 func userHistoryHandler(c *gin.Context) {
+	if !isPrivacyAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "se requiere autorización de privacidad"})
+		return
+	}
 	userID := c.Param("id")
 	rows, err := db.Query(`SELECT id, user_id, date, weight, fat_percentage, muscle_percentage FROM histories WHERE user_id = ? ORDER BY date DESC`, userID)
 	if err != nil {
@@ -1773,6 +1889,7 @@ func userHistoryHandler(c *gin.Context) {
 	if history == nil {
 		history = []HistoryEntry{}
 	}
+	auditAdminAction(c, "view_user_health_history", userID)
 	c.JSON(http.StatusOK, history)
 }
 
@@ -1789,6 +1906,10 @@ type ExportRecord struct {
 }
 
 func exportDataHandler(c *gin.Context) {
+	if !isPrivacyAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "la exportación requiere autorización de privacidad"})
+		return
+	}
 	query := `
 		SELECT u.id, u.name, u.email, u.role, h.id, h.date, h.weight, h.fat_percentage, h.muscle_percentage
 		FROM users u
@@ -1843,6 +1964,7 @@ func exportDataHandler(c *gin.Context) {
 	if records == nil {
 		records = []ExportRecord{}
 	}
+	auditAdminAction(c, "export_user_health_data", nil)
 	c.JSON(http.StatusOK, records)
 }
 
@@ -1882,6 +2004,7 @@ func updateUserRoleHandler(c *gin.Context) {
 		return
 	}
 
+	auditAdminAction(c, "update_user_role", userID)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "role updated"})
 }
 
@@ -1914,6 +2037,7 @@ func deleteUserHandler(c *gin.Context) {
 		return
 	}
 
+	auditAdminAction(c, "delete_user", userID)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "user deleted"})
 }
 
