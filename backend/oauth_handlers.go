@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -370,29 +371,60 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 		}
 	}
 
+	if email == "" || providerUserID == "" {
+		return 0, "", fmt.Errorf("OAuth profile did not include a usable email or provider ID")
+	}
+
 	// Buscar si ya existe vinculación
 	var userID int
 	err := db.QueryRow("SELECT user_id FROM social_accounts WHERE provider = ? AND provider_user_id = ?", provider, providerUserID).Scan(&userID)
 
-	if err != nil {
-		// No existe, crear nuevo usuario
-		hashedPassword := "$2a$10$defaultpasswordforsociallogins" // Password placeholder
-		result, err := db.Exec(
-			"INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, 'user')",
-			email, hashedPassword, name,
+	if err == sql.ErrNoRows {
+		// Reutilizar una cuenta local que tenga el mismo correo.
+		err = db.QueryRow("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", email).Scan(&userID)
+		if err == sql.ErrNoRows {
+			// No existe, crear nuevo usuario.
+			hashedPassword := "$2a$10$defaultpasswordforsociallogins"
+			_, createErr := db.Exec(
+				"INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, 'user')",
+				email, hashedPassword, name,
+			)
+			if createErr != nil {
+				return 0, "", createErr
+			}
+
+			createErr = db.QueryRow("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", email).Scan(&userID)
+			if createErr != nil {
+				return 0, "", createErr
+			}
+		} else if err != nil {
+			return 0, "", err
+		}
+
+		// Crear la vinculación social para usuarios nuevos o existentes.
+		_, err = db.Exec(
+			"INSERT INTO social_accounts (user_id, provider, provider_user_id, email, name, avatar_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+			userID, provider, providerUserID, email, name, picture,
 		)
 		if err != nil {
 			return 0, "", err
 		}
+	} else if err != nil {
+		return 0, "", err
+	}
 
-		userID64, _ := result.LastInsertId()
-		userID = int(userID64)
-
-		// Crear vinculación social
-		db.Exec(
-			"INSERT INTO social_accounts (user_id, provider, provider_user_id, email, name, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
-			userID, provider, providerUserID, email, name,
-		)
+	var storedName, storedEmail, storedRole string
+	if err := db.QueryRow("SELECT name, email, role FROM users WHERE id = ?", userID).Scan(&storedName, &storedEmail, &storedRole); err != nil {
+		return 0, "", err
+	}
+	if storedName != "" {
+		name = storedName
+	}
+	if storedEmail != "" {
+		email = storedEmail
+	}
+	if storedRole == "" {
+		storedRole = "user"
 	}
 
 	// Generar JWT token
@@ -400,7 +432,7 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 		UserID:     userID,
 		Name:       name,
 		Email:      email,
-		Role:       "user",
+		Role:       storedRole,
 		Picture:    picture,
 		GivenName:  givenName,
 		FamilyName: familyName,

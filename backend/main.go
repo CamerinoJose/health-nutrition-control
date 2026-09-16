@@ -983,6 +983,40 @@ func migrate(useSQLite bool) error {
 	// Add reminder_settings column to existing user_settings table (migration)
 	db.Exec(`ALTER TABLE user_settings ADD COLUMN reminder_settings TEXT;`)
 
+	var socialErr error
+	if useSQLite {
+		_, socialErr = db.Exec(`CREATE TABLE IF NOT EXISTS social_accounts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			provider TEXT NOT NULL,
+			provider_user_id TEXT NOT NULL,
+			email TEXT,
+			name TEXT,
+			avatar_url TEXT,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_id) REFERENCES users(id),
+			UNIQUE(provider, provider_user_id)
+		)`)
+	} else {
+		_, socialErr = db.Exec(`CREATE TABLE IF NOT EXISTS social_accounts (
+			id SERIAL PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			provider TEXT NOT NULL,
+			provider_user_id TEXT NOT NULL,
+			email TEXT,
+			name TEXT,
+			avatar_url TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_id) REFERENCES users(id),
+			UNIQUE(provider, provider_user_id)
+		)`)
+	}
+	if socialErr != nil {
+		return socialErr
+	}
+
 	var auditErr error
 	if useSQLite {
 		_, auditErr = db.Exec(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
