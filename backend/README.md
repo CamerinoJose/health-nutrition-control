@@ -35,6 +35,23 @@ go run .
 
 Si no se configura, usará una clave de desarrollo (mostrará un warning).
 
+### CORS (Web / ngrok)
+
+Por defecto, el backend permite orígenes locales de desarrollo (Vite) y el dominio web de Render.
+
+Si vas a usar un dominio de **ngrok** o un frontend con otro dominio, agrega orígenes extra:
+
+```bash
+# ejemplo con ngrok
+CORS_ALLOWED_ORIGINS="https://TU-DOMINIO.ngrok.app" go run .
+```
+
+Para desarrollo rápido (no recomendado en producción):
+
+```bash
+CORS_ALLOW_ALL=1 go run .
+```
+
 ## Base de Datos
 
 // ...existing code...

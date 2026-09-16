@@ -8,7 +8,7 @@ function addLog(msg) {
   if (logBuffer.length > 20) logBuffer.shift();
   logBuffer.push(msg);
 }
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform, LogBox } from 'react-native'
 import Constants from 'expo-constants'
 import * as WebBrowser from 'expo-web-browser'
@@ -77,10 +77,14 @@ SplashScreen.preventAutoHideAsync().catch(err => {
 });
 
 export default function App() {
+  return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
+}
+
+function AppContent() {
       // ...medicine logic moved to MedicinesScreen.js
     // Configuración de notificaciones locales
     useEffect(() => {
-      if (Constants.appOwnership === 'expo' && Platform.OS === 'android') {
+      if (Platform.OS === 'web' || (Constants.appOwnership === 'expo' && Platform.OS === 'android')) {
         return;
       }
 

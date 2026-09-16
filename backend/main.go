@@ -89,6 +89,22 @@ func getenvOrDefault(key, fallback string) string {
 	return fallback
 }
 
+func envCSV(key string) []string {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return nil
+	}
+	parts := strings.Split(val, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 type User struct {
 	ID       int    `json:"id"`
 	Name     string `json:"name"`
@@ -375,20 +391,36 @@ func main() {
 	})
 
 	// CORS for frontend dev (Vite at 5173) and general OPTIONS preflight handling
-	r.Use(cors.New(cors.Config{
-		AllowOrigins: []string{
-			"http://localhost:5173",
-			"http://127.0.0.1:5173",
-			"http://localhost:5174",
-			"http://127.0.0.1:5174",
-			"https://health-nutrition-control-web.onrender.com",
-		},
+	defaultOrigins := []string{
+		"http://localhost:5173",
+		"http://127.0.0.1:5173",
+		"http://localhost:5174",
+		"http://127.0.0.1:5174",
+		"https://health-nutrition-control-web.onrender.com",
+	}
+
+	allowAll := strings.TrimSpace(os.Getenv("CORS_ALLOW_ALL")) == "1"
+	extraOrigins := envCSV("CORS_ALLOWED_ORIGINS")
+	allowedOrigins := defaultOrigins
+	if len(extraOrigins) > 0 {
+		allowedOrigins = append(allowedOrigins, extraOrigins...)
+	}
+	allowedOrigins = append(allowedOrigins, localPreviewOrigins()...)
+
+	corsCfg := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
-	}))
+	}
+	if allowAll {
+		corsCfg.AllowAllOrigins = true
+	} else {
+		corsCfg.AllowOrigins = allowedOrigins
+	}
+
+	r.Use(cors.New(corsCfg))
 
 	// Health check endpoint (no auth required)
 	r.GET("/health", func(c *gin.Context) {
@@ -645,7 +677,7 @@ func migrate(useSQLite bool) error {
 	var queries []string
 	if useSQLite {
 		queries = []string{
-			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT);`,
+			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER);`,
 			`CREATE TABLE IF NOT EXISTS histories (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS meal_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS plan_meals (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
@@ -661,6 +693,7 @@ func migrate(useSQLite bool) error {
 			`CREATE TABLE IF NOT EXISTS appointments (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				user_id INTEGER,
+				nutritionist_id INTEGER,
 				title TEXT,
 				description TEXT,
 				appointment_date TEXT,
@@ -788,7 +821,7 @@ func migrate(useSQLite bool) error {
 		}
 	} else {
 		queries = []string{
-			`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT);`,
+			`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER);`,
 			`CREATE TABLE IF NOT EXISTS histories (id SERIAL PRIMARY KEY, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS meal_plans (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS plan_meals (id SERIAL PRIMARY KEY, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
@@ -804,6 +837,7 @@ func migrate(useSQLite bool) error {
 			`CREATE TABLE IF NOT EXISTS appointments (
 				id SERIAL PRIMARY KEY,
 				user_id INTEGER,
+				nutritionist_id INTEGER,
 				title TEXT,
 				description TEXT,
 				appointment_date TEXT,
@@ -941,6 +975,9 @@ func migrate(useSQLite bool) error {
 
 	// Add nutritionist_id column to users table if it doesn't exist
 	db.Exec(`ALTER TABLE users ADD COLUMN nutritionist_id INTEGER;`)
+
+	// Add nutritionist_id column to appointments table if it doesn't exist
+	db.Exec(`ALTER TABLE appointments ADD COLUMN nutritionist_id INTEGER;`)
 
 	// Add reminder_settings column to existing user_settings table (migration)
 	db.Exec(`ALTER TABLE user_settings ADD COLUMN reminder_settings TEXT;`)
@@ -3793,10 +3830,71 @@ func rejectAppointmentChangeHandler(c *gin.Context) {
 
 // --- Nutritionist Handlers (stubs) ---
 func listNutritionistsHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "listNutritionistsHandler not implemented"})
+	rows, err := db.Query(`SELECT id, name, email FROM users WHERE role = 'nutritionist' ORDER BY id DESC`)
+	if err != nil {
+		log.Printf("[Nutritionist] Error listing nutritionists: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list nutritionists"})
+		return
+	}
+	defer rows.Close()
+
+	var nutritionists []gin.H
+	for rows.Next() {
+		var id int
+		var name, email string
+		if err := rows.Scan(&id, &name, &email); err != nil {
+			log.Printf("[Nutritionist] Error scanning nutritionist: %v", err)
+			continue
+		}
+		nutritionists = append(nutritionists, gin.H{
+			"id":    id,
+			"name":  name,
+			"email": email,
+		})
+	}
+
+	if nutritionists == nil {
+		nutritionists = []gin.H{}
+	}
+
+	c.JSON(http.StatusOK, nutritionists)
 }
 func assignNutritionistHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "assignNutritionistHandler not implemented"})
+	claims := c.MustGet("claims").(*Claims)
+
+	var req struct {
+		NutritionistID int `json:"nutritionist_id" binding:"required"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
+		return
+	}
+	if req.NutritionistID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "nutritionist_id inválido"})
+		return
+	}
+
+	// Validate that the nutritionist exists and has the right role
+	var nutritionistCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ? AND role = 'nutritionist'`, req.NutritionistID).Scan(&nutritionistCount); err != nil {
+		log.Printf("[Nutritionist] Error validating nutritionist: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate nutritionist"})
+		return
+	}
+	if nutritionistCount == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "nutritionist not found"})
+		return
+	}
+
+	// Assign (or re-assign) nutritionist
+	_, err := db.Exec(`UPDATE users SET nutritionist_id = ? WHERE id = ?`, req.NutritionistID, claims.UserID)
+	if err != nil {
+		log.Printf("[Nutritionist] Error assigning nutritionist: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to assign nutritionist"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "nutritionist_id": req.NutritionistID})
 }
 func getAvailableSlotsForUserHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "getAvailableSlotsForUserHandler not implemented"})

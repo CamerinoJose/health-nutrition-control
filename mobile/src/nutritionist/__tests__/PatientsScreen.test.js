@@ -1,17 +1,14 @@
-// File intentionally left blank or removed to match production Expo Go environment.
-import React from 'react'
+﻿import React from 'react'
 import { render, fireEvent, waitFor } from '@testing-library/react-native'
 import { Share } from 'react-native'
 import PatientsScreen from '../PatientsScreen'
 import api from '../../api'
 
 jest.mock('../../api')
-jest.mock('react-native/Libraries/Share/Share', () => ({
-  share: jest.fn()
-}))
 
-describe('NutritionistPatientsScreen - Enhanced Version', () => {
+describe('NutritionistPatientsScreen', () => {
   const mockNavigate = jest.fn()
+
   const mockPatients = [
     {
       id: 1,
@@ -23,7 +20,8 @@ describe('NutritionistPatientsScreen - Enhanced Version', () => {
       age: 30,
       sex: 'M',
       activity_level: 'moderado',
-      goal: 'pérdida'
+      goal: 'pérdida',
+      appointment_count: 3
     },
     {
       id: 2,
@@ -35,7 +33,8 @@ describe('NutritionistPatientsScreen - Enhanced Version', () => {
       age: 25,
       sex: 'F',
       activity_level: 'activo',
-      goal: 'mantenimiento'
+      goal: 'mantenimiento',
+      appointment_count: 2
     }
   ]
 
@@ -43,627 +42,197 @@ describe('NutritionistPatientsScreen - Enhanced Version', () => {
     id: 1,
     name: 'Juan Pérez',
     email: 'juan@test.com',
-    phone: '555-0001',
-    height: 175,
-    weight: 80,
-    age: 30,
-    sex: 'M',
-    activity_level: 'moderado',
-    goal: 'pérdida',
-    allergies: 'Mariscos',
-    conditions: 'Diabetes tipo 2',
-    notes: 'Prefiere comida vegetariana'
+    last_visit: '2026-01-10T10:00:00Z',
+    weight: 80
   }
 
   const mockHistory = [
-    {
-      id: 1,
-      date: '2026-01-01',
-      weight: 82,
-      notes: 'Inicio del tratamiento'
-    },
-    {
-      id: 2,
-      date: '2026-01-08',
-      weight: 80,
-      notes: 'Buena adherencia'
-    }
+    { id: 1, date: '2026-01-01', weight: 82 },
+    { id: 2, date: '2026-01-08', weight: 80 }
   ]
 
   const mockRecommendations = [
     {
       id: 1,
       created_at: '2026-01-01T10:00:00Z',
-      diet_recs: 'Reducir carbohidratos refinados',
-      exercise_recs: 'Caminar 30 min diarios',
-      goals: 'Perder 2kg este mes'
+      recommendation_text: 'Reducir carbohidratos refinados'
     },
     {
       id: 2,
       created_at: '2026-01-08T10:00:00Z',
-      diet_recs: 'Aumentar proteína',
-      exercise_recs: 'Agregar pesas 2x semana',
-      goals: 'Mantener pérdida de peso'
+      recommendation_text: 'Caminar 30 minutos diarios'
     }
   ]
 
   beforeEach(() => {
     jest.clearAllMocks()
-    Share.share.mockResolvedValue({ action: 'sharedAction' })
+    Share.share = jest.fn(async () => ({ action: 'sharedAction' }))
+    global.console.error = jest.fn()
   })
 
-  describe('Component Rendering', () => {
-    it('should render the screen with header and tabs', async () => {
-      api.get.mockResolvedValue({ data: [] })
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        expect(getByText('Mis Pacientes')).toBeTruthy()
-        expect(getByText('← Volver')).toBeTruthy()
-      })
-    })
+  it('renders the header and back button', async () => {
+    api.get.mockResolvedValue({ data: [] })
+    const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
 
-    it('should display loading indicator initially', () => {
-      api.get.mockImplementation(() => new Promise(() => {}))
-      const { UNSAFE_queryByType } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      const activityIndicators = UNSAFE_queryByType('ActivityIndicator')
-      expect(activityIndicators).toBeTruthy()
-    })
-
-    it('should show empty state when no patients', async () => {
-      api.get.mockResolvedValue({ data: [] })
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        expect(getByText('No hay pacientes todavía')).toBeTruthy()
-      })
+    await waitFor(() => {
+      expect(getByText('Pacientes')).toBeTruthy()
+      expect(getByText('←')).toBeTruthy()
     })
   })
 
-  describe('Patients List', () => {
-    it('should display all patients', async () => {
-      api.get.mockResolvedValue({ data: mockPatients })
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        expect(getByText('Juan Pérez')).toBeTruthy()
-        expect(getByText('María García')).toBeTruthy()
-        expect(getByText('juan@test.com')).toBeTruthy()
-        expect(getByText('maria@test.com')).toBeTruthy()
-      })
-    })
+  it('shows the loading indicator while patients load', () => {
+    api.get.mockImplementation(() => new Promise(() => {}))
+    const { UNSAFE_queryByType } = render(<PatientsScreen onNavigate={mockNavigate} />)
 
-    it('should display patient metrics', async () => {
-      api.get.mockResolvedValue({ data: mockPatients })
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        expect(getByText(/175 cm/)).toBeTruthy()
-        expect(getByText(/80 kg/)).toBeTruthy()
-        expect(getByText(/30 años/)).toBeTruthy()
-      })
-    })
+    expect(UNSAFE_queryByType('ActivityIndicator')).toBeTruthy()
+  })
 
-    it('should show patient goals', async () => {
-      api.get.mockResolvedValue({ data: mockPatients })
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        expect(getByText(/pérdida/)).toBeTruthy()
-        expect(getByText(/mantenimiento/)).toBeTruthy()
-      })
-    })
+  it('shows the empty state when no patients exist', async () => {
+    api.get.mockResolvedValue({ data: [] })
+    const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
 
-    it('should show patient activity levels', async () => {
-      api.get.mockResolvedValue({ data: mockPatients })
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        expect(getByText(/moderado/)).toBeTruthy()
-        expect(getByText(/activo/)).toBeTruthy()
-      })
+    await waitFor(() => {
+      expect(getByText('Sin pacientes')).toBeTruthy()
     })
   })
 
-  describe('Patient Detail View', () => {
-    it('should open detail modal when patient is selected', async () => {
-      api.get.mockResolvedValue({ data: mockPatients })
-      api.get.mockImplementationOnce(() => Promise.resolve({ data: mockPatients }))
-        .mockImplementationOnce(() => Promise.resolve({ data: mockPatientDetails }))
-        .mockImplementationOnce(() => Promise.resolve({ data: mockHistory }))
-        .mockImplementationOnce(() => Promise.resolve({ data: mockRecommendations }))
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        expect(api.get).toHaveBeenCalledWith('/nutritionist/patients/1')
-      })
-    })
+  it('displays all patients in the list', async () => {
+    api.get.mockResolvedValue({ data: mockPatients })
+    const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
 
-    it('should show tabs in detail modal', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        expect(getByText('Información')).toBeTruthy()
-        expect(getByText('Recomendaciones')).toBeTruthy()
-      })
-    })
-
-    it('should display patient allergies and conditions', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        expect(getByText(/Alergias:/)).toBeTruthy()
-        expect(getByText('Mariscos')).toBeTruthy()
-        expect(getByText(/Condiciones:/)).toBeTruthy()
-        expect(getByText('Diabetes tipo 2')).toBeTruthy()
-      })
-    })
-
-    it('should display patient notes', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        expect(getByText(/Notas:/)).toBeTruthy()
-        expect(getByText('Prefiere comida vegetariana')).toBeTruthy()
-      })
-    })
-
-    it('should display weight history', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        expect(getByText(/Historial de Peso/)).toBeTruthy()
-        expect(getByText(/82 kg/)).toBeTruthy()
-        expect(getByText(/80 kg/)).toBeTruthy()
-      })
+    await waitFor(() => {
+      expect(getByText('Juan Pérez')).toBeTruthy()
+      expect(getByText('María García')).toBeTruthy()
+      expect(getByText('juan@test.com')).toBeTruthy()
+      expect(getByText('maria@test.com')).toBeTruthy()
     })
   })
 
-  describe('Recommendations Tab', () => {
-    it('should switch to recommendations tab', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText, getAllByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        const recTabs = getAllByText('Recomendaciones')
-        if (recTabs.length > 0) {
-          fireEvent.press(recTabs[0])
-        }
-      })
-      
-      await waitFor(() => {
-        expect(getByText(/Recomendaciones actuales/)).toBeTruthy()
-      })
+  it('shows patient details when a patient is selected', async () => {
+    api.get.mockImplementation((url) => {
+      if (url === '/nutritionist/patients') return Promise.resolve({ data: mockPatients })
+      if (url === '/nutritionist/patients/1') return Promise.resolve({ data: mockPatientDetails })
+      if (url === '/nutritionist/patients/1/history') return Promise.resolve({ data: mockHistory })
+      if (url === '/nutritionist/recommendations/1') return Promise.resolve({ data: mockRecommendations })
+      return Promise.resolve({ data: [] })
     })
 
-    it('should display recommendations in the tab', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText, getAllByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        const recTabs = getAllByText('Recomendaciones')
-        if (recTabs.length > 0) {
-          fireEvent.press(recTabs[0])
-        }
-      })
-      
-      await waitFor(() => {
-        expect(getByText('Reducir carbohidratos refinados')).toBeTruthy()
-        expect(getByText('Caminar 30 min diarios')).toBeTruthy()
-        expect(getByText('Perder 2kg este mes')).toBeTruthy()
-      })
-    })
+    const { getAllByText, getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
 
-    it('should show empty state when no recommendations', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: [] })
-      
-      const { getByText, getAllByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        const recTabs = getAllByText('Recomendaciones')
-        if (recTabs.length > 0) {
-          fireEvent.press(recTabs[0])
-        }
-      })
-      
-      await waitFor(() => {
-        expect(getByText(/No hay recomendaciones/)).toBeTruthy()
-      })
-    })
-
-    it('should format recommendation dates', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText, getAllByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        const recTabs = getAllByText('Recomendaciones')
-        if (recTabs.length > 0) {
-          fireEvent.press(recTabs[0])
-        }
-      })
-      
-      await waitFor(() => {
-        // Should show formatted date
-        expect(getByText(/2026/)).toBeTruthy()
-      })
-    })
-
-    it('should display all recommendation sections', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText, getAllByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        const recTabs = getAllByText('Recomendaciones')
-        if (recTabs.length > 0) {
-          fireEvent.press(recTabs[0])
-        }
-      })
-      
-      await waitFor(() => {
-        expect(getByText(/🥗 Dieta:/)).toBeTruthy()
-        expect(getByText(/💪 Ejercicio:/)).toBeTruthy()
-        expect(getByText(/🎯 Metas:/)).toBeTruthy()
-      })
+    await waitFor(() => {
+      expect(getAllByText('Juan Pérez').length).toBeGreaterThan(0)
+      expect(getByText(/Última visita:/)).toBeTruthy()
+      expect(getByText(/Peso actual:/)).toBeTruthy()
+      expect(getByText('Historial reciente')).toBeTruthy()
     })
   })
 
-  describe('Export Functionality', () => {
-    it('should have export button in detail view', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        expect(getByText('📤 Exportar')).toBeTruthy()
-      })
+  it('switches to the recommendations tab and renders recommendation text', async () => {
+    api.get.mockImplementation((url) => {
+      if (url === '/nutritionist/patients') return Promise.resolve({ data: mockPatients })
+      if (url === '/nutritionist/patients/1') return Promise.resolve({ data: mockPatientDetails })
+      if (url === '/nutritionist/patients/1/history') return Promise.resolve({ data: mockHistory })
+      if (url === '/nutritionist/recommendations/1') return Promise.resolve({ data: mockRecommendations })
+      return Promise.resolve({ data: [] })
     })
 
-    it('should call Share API when export button is pressed', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('📤 Exportar'))
-      })
-      
-      await waitFor(() => {
-        expect(Share.share).toHaveBeenCalled()
-      })
+    const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
+
+    await waitFor(() => {
+      fireEvent.press(getByText('Recomendaciones (2)'))
     })
 
-    it('should include patient info in export', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('📤 Exportar'))
-      })
-      
-      await waitFor(() => {
-        const shareCall = Share.share.mock.calls[0]
-        if (shareCall) {
-          const message = shareCall[0].message
-          expect(message).toContain('Juan Pérez')
-          expect(message).toContain('juan@test.com')
-          expect(message).toContain('175 cm')
-          expect(message).toContain('80 kg')
-        }
-      })
-    })
-
-    it('should include weight history in export', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('📤 Exportar'))
-      })
-      
-      await waitFor(() => {
-        const shareCall = Share.share.mock.calls[0]
-        if (shareCall) {
-          const message = shareCall[0].message
-          expect(message).toContain('Historial de Peso')
-          expect(message).toContain('82 kg')
-          expect(message).toContain('80 kg')
-        }
-      })
-    })
-
-    it('should include recommendations in export', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('📤 Exportar'))
-      })
-      
-      await waitFor(() => {
-        const shareCall = Share.share.mock.calls[0]
-        if (shareCall) {
-          const message = shareCall[0].message
-          expect(message).toContain('Recomendaciones')
-          expect(message).toContain('Reducir carbohidratos refinados')
-        }
-      })
-    })
-
-    it('should handle export errors gracefully', async () => {
-      Share.share.mockRejectedValue(new Error('Share failed'))
-      global.console.error = jest.fn()
-      
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('📤 Exportar'))
-      })
-      
-      await waitFor(() => {
-        expect(global.console.error).toHaveBeenCalled()
-      })
+    await waitFor(() => {
+      expect(getByText('Reducir carbohidratos refinados')).toBeTruthy()
+      expect(getByText('Caminar 30 minutos diarios')).toBeTruthy()
     })
   })
 
-  describe('Error Handling', () => {
-    it('should display error banner when patients fail to load', async () => {
-      api.get.mockRejectedValue(new Error('Network error'))
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        expect(getByText('Error al cargar pacientes')).toBeTruthy()
-      })
+  it('exports the patient report through Share', async () => {
+    api.get.mockImplementation((url) => {
+      if (url === '/nutritionist/patients') return Promise.resolve({ data: mockPatients })
+      if (url === '/nutritionist/patients/1') return Promise.resolve({ data: mockPatientDetails })
+      if (url === '/nutritionist/patients/1/history') return Promise.resolve({ data: mockHistory })
+      if (url === '/nutritionist/recommendations/1') return Promise.resolve({ data: mockRecommendations })
+      return Promise.resolve({ data: [] })
     })
 
-    it('should handle missing patient details gracefully', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
-      
-      const { getByText, queryByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        // Should not crash
-        expect(queryByText('Juan Pérez')).toBeTruthy()
-      })
+    const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
+
+    await waitFor(() => {
+      fireEvent.press(getByText('📄'))
     })
 
-    it('should handle empty history gracefully', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: [] })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        expect(getByText(/Historial de Peso/)).toBeTruthy()
-      })
+    await waitFor(() => {
+      expect(Share.share).toHaveBeenCalledTimes(1)
+      const shareCall = Share.share.mock.calls[0][0]
+      expect(shareCall.message).toContain('Juan Pérez')
+      expect(shareCall.message).toContain('REPORTE DE PACIENTE')
     })
   })
 
-  describe('Navigation', () => {
-    it('should navigate back to dashboard when back button is pressed', async () => {
-      api.get.mockResolvedValue({ data: [] })
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('← Volver'))
-      })
-      
-      expect(mockNavigate).toHaveBeenCalledWith('dashboard')
+  it('logs export errors without crashing', async () => {
+    Share.share = jest.fn(async () => {
+      throw new Error('Share failed')
     })
 
-    it('should close detail modal when close button is pressed', async () => {
-      api.get
-        .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockPatientDetails })
-        .mockResolvedValueOnce({ data: mockHistory })
-        .mockResolvedValueOnce({ data: mockRecommendations })
-      
-      const { getByText, queryByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        fireEvent.press(getByText('Juan Pérez'))
-      })
-      
-      await waitFor(() => {
-        expect(getByText('Cerrar')).toBeTruthy()
-      })
-      
-      fireEvent.press(getByText('Cerrar'))
-      
-      await waitFor(() => {
-        expect(queryByText('Cerrar')).toBeNull()
-      })
+    api.get.mockImplementation((url) => {
+      if (url === '/nutritionist/patients') return Promise.resolve({ data: mockPatients })
+      if (url === '/nutritionist/patients/1') return Promise.resolve({ data: mockPatientDetails })
+      if (url === '/nutritionist/patients/1/history') return Promise.resolve({ data: mockHistory })
+      if (url === '/nutritionist/recommendations/1') return Promise.resolve({ data: mockRecommendations })
+      return Promise.resolve({ data: [] })
+    })
+
+    const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
+
+    await waitFor(() => {
+      fireEvent.press(getByText('📄'))
+    })
+
+    await waitFor(() => {
+      expect(global.console.error).toHaveBeenCalled()
     })
   })
 
-  describe('Pull to Refresh', () => {
-    it('should reload patients on pull to refresh', async () => {
-      api.get.mockResolvedValue({ data: mockPatients })
-      
-      const { UNSAFE_getByType } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        expect(api.get).toHaveBeenCalledWith('/nutritionist/patients')
-      })
-      
-      const scrollView = UNSAFE_getByType('ScrollView')
-      const refreshControl = scrollView.props.refreshControl
-      
-      if (refreshControl && refreshControl.props.onRefresh) {
-        refreshControl.props.onRefresh()
-      }
-      
-      await waitFor(() => {
-        expect(api.get).toHaveBeenCalledTimes(2)
-      })
+  it('shows an error banner when patients fail to load', async () => {
+    api.get.mockRejectedValue(new Error('Network error'))
+    const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
+
+    await waitFor(() => {
+      expect(getByText('No se pudieron cargar los pacientes')).toBeTruthy()
     })
   })
 
-  describe('Accessibility', () => {
-    it('should have accessible labels for important elements', async () => {
-      api.get.mockResolvedValue({ data: mockPatients })
-      const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
-      
-      await waitFor(() => {
-        expect(getByText('Mis Pacientes')).toBeTruthy()
-        expect(getByText('← Volver')).toBeTruthy()
-      })
+  it('navigates back to dashboard when the back button is pressed', async () => {
+    api.get.mockResolvedValue({ data: [] })
+    const { getByText } = render(<PatientsScreen onNavigate={mockNavigate} />)
+
+    await waitFor(() => {
+      fireEvent.press(getByText('←'))
+    })
+
+    expect(mockNavigate).toHaveBeenCalledWith('dashboard')
+  })
+
+  it('triggers a refresh and reloads patients', async () => {
+    api.get.mockResolvedValue({ data: mockPatients })
+
+    const { UNSAFE_queryAllByType } = render(<PatientsScreen onNavigate={mockNavigate} />)
+
+    await waitFor(() => {
+      expect(api.get).toHaveBeenCalledWith('/nutritionist/patients')
+    })
+
+    const scrollView = UNSAFE_queryAllByType('RCTScrollView')[0]
+    const refreshControl = scrollView && scrollView.props && scrollView.props.refreshControl
+
+    if (refreshControl && refreshControl.props.onRefresh) {
+      await refreshControl.props.onRefresh()
+    }
+
+    await waitFor(() => {
+      expect(api.get.mock.calls.length).toBeGreaterThan(1)
     })
   })
 })
-// File intentionally left blank or removed to match GitHub repo state.

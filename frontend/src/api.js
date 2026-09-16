@@ -1,10 +1,14 @@
 import axios from 'axios'
 import { getToken } from './auth'
 
-// Use VITE_BACKEND_URL for Render/production, fallback to relative '/api' for dev
-// VITE_BACKEND_URL should be set in .env.local (e.g., https://health-nutrition-control.onrender.com/api)
+// Use VITE_BACKEND_URL for production (preferred), accept legacy VITE_API_URL,
+// fallback to relative '/api' for dev proxy.
+// Examples:
+// - Render/prod: https://health-nutrition-control.onrender.com/api
+// - ngrok:      https://<API_DOMAIN>.ngrok-free.dev/api
 const API_BASE_URL =
   import.meta.env.VITE_BACKEND_URL ||
+  import.meta.env.VITE_API_URL ||
   '/api'
 
 const api = axios.create({

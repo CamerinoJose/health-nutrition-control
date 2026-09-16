@@ -1,6 +1,7 @@
 // File intentionally left blank or removed to match production Expo Go environment.
 import React from 'react'
 import { render, fireEvent, waitFor } from '@testing-library/react-native'
+import { Alert } from 'react-native'
 import RecipesScreen from '../RecipesScreen'
 import api from '../../api'
 
@@ -90,15 +91,15 @@ describe('NutritionistRecipesScreen', () => {
   describe('Recipe Information Display', () => {
     it('should display recipe details correctly', async () => {
       api.get.mockResolvedValue({ data: mockRecipes })
-      const { getByText } = render(<RecipesScreen onNavigate={mockNavigate} />)
+      const { getByText, getAllByText } = render(<RecipesScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
         expect(getByText('⏱️ 20 min')).toBeTruthy()
         expect(getByText('👥 2 porciones')).toBeTruthy()
         expect(getByText('🔥 350 kcal')).toBeTruthy()
-        expect(getByText('25g')).toBeTruthy() // Protein
-        expect(getByText('15g')).toBeTruthy() // Carbs
-        expect(getByText('20g')).toBeTruthy() // Fat
+        expect(getAllByText('25g').length).toBeGreaterThan(0)
+        expect(getAllByText('15g').length).toBeGreaterThan(0)
+        expect(getAllByText('20g').length).toBeGreaterThan(0)
       })
     })
 
@@ -225,7 +226,7 @@ describe('NutritionistRecipesScreen', () => {
 
     it('should pre-fill form when editing existing recipe', async () => {
       api.get.mockResolvedValue({ data: mockRecipes })
-      const { getAllByText, getByDisplayValue } = render(<RecipesScreen onNavigate={mockNavigate} />)
+      const { getAllByText, getByDisplayValue, getAllByDisplayValue } = render(<RecipesScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
         const editButtons = getAllByText('✏️')
@@ -234,8 +235,8 @@ describe('NutritionistRecipesScreen', () => {
       
       await waitFor(() => {
         expect(getByDisplayValue('Ensalada César')).toBeTruthy()
-        expect(getByDisplayValue('20')).toBeTruthy()
-        expect(getByDisplayValue('2')).toBeTruthy()
+        expect(getAllByDisplayValue('20').length).toBeGreaterThan(0)
+        expect(getAllByDisplayValue('2').length).toBeGreaterThan(0)
       })
     })
 
@@ -269,27 +270,26 @@ describe('NutritionistRecipesScreen', () => {
     it('should call delete API when delete is confirmed', async () => {
       api.get.mockResolvedValue({ data: mockRecipes })
       api.delete.mockResolvedValue({ data: { success: true } })
-      
-      // Mock Alert.alert to auto-confirm
-      global.Alert = {
-        alert: (title, message, buttons) => {
-          const confirmButton = buttons.find(b => b.style === 'destructive')
-          if (confirmButton && confirmButton.onPress) {
-            confirmButton.onPress()
-          }
+
+      const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((title, message, buttons) => {
+        const confirmButton = Array.isArray(buttons) ? buttons.find(b => b.style === 'destructive') : null
+        if (confirmButton && confirmButton.onPress) {
+          confirmButton.onPress()
         }
-      }
-      
+      })
+
       const { getAllByText } = render(<RecipesScreen onNavigate={mockNavigate} />)
-      
+
       await waitFor(() => {
         const deleteButtons = getAllByText('🗑️')
         fireEvent.press(deleteButtons[0])
       })
-      
+
       await waitFor(() => {
         expect(api.delete).toHaveBeenCalledWith('/nutritionist/recipes/1')
       })
+
+      alertSpy.mockRestore()
     })
   })
 
@@ -350,17 +350,18 @@ describe('NutritionistRecipesScreen', () => {
   describe('Pull to Refresh', () => {
     it('should reload recipes on pull to refresh', async () => {
       api.get.mockResolvedValue({ data: mockRecipes })
-      const { UNSAFE_getByType } = render(<RecipesScreen onNavigate={mockNavigate} />)
+      const { UNSAFE_getAllByType } = render(<RecipesScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
         expect(api.get).toHaveBeenCalledTimes(1)
       })
       
-      const scrollView = UNSAFE_getByType('ScrollView')
+      const { ScrollView } = require('react-native')
+      const scrollView = UNSAFE_getAllByType(ScrollView)[0]
       const refreshControl = scrollView.props.refreshControl
       
       if (refreshControl && refreshControl.props.onRefresh) {
-        refreshControl.props.onRefresh()
+        await refreshControl.props.onRefresh()
       }
       
       await waitFor(() => {

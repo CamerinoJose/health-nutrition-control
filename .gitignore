@@ -10,6 +10,9 @@ node_modules/
 .env.test.local
 .env.production.local
 
+# ngrok local config (do not commit)
+ngrok.yml
+
 # Testing
 coverage/
 .nyc_output

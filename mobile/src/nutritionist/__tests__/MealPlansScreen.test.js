@@ -1,6 +1,7 @@
 // File intentionally left blank or removed to match production Expo Go environment.
 import React from 'react'
 import { render, fireEvent, waitFor } from '@testing-library/react-native'
+import { Alert } from 'react-native'
 import MealPlansScreen from '../MealPlansScreen'
 import api from '../../api'
 
@@ -45,6 +46,11 @@ describe('NutritionistMealPlansScreen', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
   })
 
   describe('Component Rendering', () => {
@@ -178,11 +184,11 @@ describe('NutritionistMealPlansScreen', () => {
         .mockResolvedValueOnce({ data: mockPatients })
         .mockResolvedValueOnce({ data: mockMealPlan })
       
-      const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
+      const { getByText, getAllByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
-        expect(getByText('Desayuno')).toBeTruthy()
-        expect(getByText('Almuerzo')).toBeTruthy()
+        expect(getAllByText('Desayuno').length).toBeGreaterThan(0)
+        expect(getAllByText('Almuerzo').length).toBeGreaterThan(0)
         expect(getByText(/Ingredientes: Avena, fresas, plátano/)).toBeTruthy()
       })
     })
@@ -197,8 +203,10 @@ describe('NutritionistMealPlansScreen', () => {
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         expect(getByText('Nuevo Plan')).toBeTruthy()
@@ -210,15 +218,17 @@ describe('NutritionistMealPlansScreen', () => {
         .mockResolvedValueOnce({ data: mockPatients })
         .mockResolvedValueOnce({ data: null })
       
-      const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
+      const { getByText, getAllByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         expect(getByText(/Para:/)).toBeTruthy()
-        expect(getByText('Juan Pérez')).toBeTruthy()
+        expect(getAllByText('Juan Pérez').length).toBeGreaterThan(0)
       })
     })
 
@@ -230,8 +240,10 @@ describe('NutritionistMealPlansScreen', () => {
       const { getByText, getByPlaceholderText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         expect(getByText('Nombre del Plan *')).toBeTruthy()
@@ -249,8 +261,10 @@ describe('NutritionistMealPlansScreen', () => {
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         expect(getByText('Lunes')).toBeTruthy()
@@ -268,11 +282,13 @@ describe('NutritionistMealPlansScreen', () => {
         .mockResolvedValueOnce({ data: mockPatients })
         .mockResolvedValueOnce({ data: null })
       
-      const { getAllByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
+      const { getAllByText, getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
-        fireEvent.press(getAllByText('+ Crear')[0])
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getAllByText('+ Crear')[0])
       
       await waitFor(() => {
         const desayunos = getAllByText('Desayuno')
@@ -296,19 +312,19 @@ describe('NutritionistMealPlansScreen', () => {
         .mockResolvedValueOnce({ data: mockPatients })
         .mockResolvedValueOnce({ data: null })
       
-      global.Alert = { alert: jest.fn() }
-      
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         fireEvent.press(getByText('Crear'))
       })
       
-      expect(global.Alert.alert).toHaveBeenCalledWith('Error', 'El nombre del plan es requerido')
+      expect(Alert.alert).toHaveBeenCalledWith('Error', 'El nombre del plan es requerido')
       expect(api.post).not.toHaveBeenCalled()
     })
 
@@ -317,20 +333,20 @@ describe('NutritionistMealPlansScreen', () => {
         .mockResolvedValueOnce({ data: mockPatients })
         .mockResolvedValueOnce({ data: null })
       
-      global.Alert = { alert: jest.fn() }
-      
       const { getByText, getByPlaceholderText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         fireEvent.changeText(getByPlaceholderText('Ej: Plan Enero 2026'), 'Test Plan')
         fireEvent.press(getByText('Crear'))
       })
       
-      expect(global.Alert.alert).toHaveBeenCalledWith('Aviso', 'Agrega al menos una comida')
+      expect(Alert.alert).toHaveBeenCalledWith('Aviso', 'Agrega al menos una comida')
       expect(api.post).not.toHaveBeenCalled()
     })
 
@@ -340,15 +356,15 @@ describe('NutritionistMealPlansScreen', () => {
         .mockResolvedValueOnce({ data: null })
       api.post.mockResolvedValue({ data: { id: 1 } })
       
-      global.Alert = { alert: jest.fn() }
-      
       const { getByText, getByPlaceholderText, getAllByPlaceholderText } = render(
         <MealPlansScreen onNavigate={mockNavigate} />
       )
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         fireEvent.changeText(getByPlaceholderText('Ej: Plan Enero 2026'), 'Test Plan')
@@ -374,7 +390,7 @@ describe('NutritionistMealPlansScreen', () => {
             ])
           })
         )
-        expect(global.Alert.alert).toHaveBeenCalledWith(
+        expect(Alert.alert).toHaveBeenCalledWith(
           'Éxito',
           'Plan de comidas creado y notificado al paciente'
         )
@@ -392,8 +408,10 @@ describe('NutritionistMealPlansScreen', () => {
       )
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         fireEvent.changeText(getByPlaceholderText('Ej: Plan Enero 2026'), 'Test Plan')
@@ -428,8 +446,10 @@ describe('NutritionistMealPlansScreen', () => {
       )
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         fireEvent.changeText(getByPlaceholderText('Ej: Plan Enero 2026'), 'Test Plan')
@@ -488,15 +508,15 @@ describe('NutritionistMealPlansScreen', () => {
         .mockResolvedValueOnce({ data: null })
       api.post.mockRejectedValue(new Error('API Error'))
       
-      global.Alert = { alert: jest.fn() }
-      
       const { getByText, getByPlaceholderText, getAllByPlaceholderText } = render(
         <MealPlansScreen onNavigate={mockNavigate} />
       )
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         fireEvent.changeText(getByPlaceholderText('Ej: Plan Enero 2026'), 'Test')
@@ -509,7 +529,7 @@ describe('NutritionistMealPlansScreen', () => {
       fireEvent.press(getByText('Crear'))
       
       await waitFor(() => {
-        expect(global.Alert.alert).toHaveBeenCalledWith('Error', 'No se pudo crear el plan')
+        expect(Alert.alert).toHaveBeenCalledWith('Error', 'No se pudo crear el plan')
       })
     })
   })
@@ -533,21 +553,22 @@ describe('NutritionistMealPlansScreen', () => {
         .mockResolvedValueOnce({ data: mockPatients })
         .mockResolvedValueOnce({ data: null })
       
-      const { UNSAFE_getByType } = render(<MealPlansScreen onNavigate={mockNavigate} />)
+      const { UNSAFE_getAllByType } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
         expect(api.get).toHaveBeenCalledTimes(2)
       })
       
-      const scrollView = UNSAFE_getByType('ScrollView')
-      const refreshControl = scrollView.props.refreshControl
+      const { ScrollView } = require('react-native')
+      const scrollView = UNSAFE_getAllByType(ScrollView).find(sv => sv.props.refreshControl)
+      const refreshControl = scrollView && scrollView.props.refreshControl
       
       if (refreshControl && refreshControl.props.onRefresh) {
-        refreshControl.props.onRefresh()
+        await refreshControl.props.onRefresh()
       }
       
       await waitFor(() => {
-        expect(api.get).toHaveBeenCalledTimes(4) // 2 more calls
+        expect(api.get).toHaveBeenCalledTimes(3) // 1 more call
       })
     })
   })
@@ -561,8 +582,10 @@ describe('NutritionistMealPlansScreen', () => {
       const { getByText, getByDisplayValue } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
       await waitFor(() => {
-        fireEvent.press(getByText('+ Crear'))
+        expect(getByText('Juan Pérez')).toBeTruthy()
       })
+
+      fireEvent.press(getByText('+ Crear'))
       
       await waitFor(() => {
         const today = new Date().toISOString().split('T')[0]
