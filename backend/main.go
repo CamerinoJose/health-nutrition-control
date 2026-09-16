@@ -580,6 +580,7 @@ func main() {
 
 			// ...existing code...
 			auth.GET("/me", meHandler)
+			auth.PUT("/me/profile", updateProfileHandler)
 			auth.PUT("/me/contact", updateContactPhoneHandler)
 			auth.POST("/history", createHistoryHandler)
 			auth.GET("/history", listHistoryHandler)
@@ -679,7 +680,7 @@ func migrate(useSQLite bool) error {
 	var queries []string
 	if useSQLite {
 		queries = []string{
-			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER, phone TEXT);`,
+			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER, phone TEXT, contact_preference TEXT);`,
 			`CREATE TABLE IF NOT EXISTS histories (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS meal_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS plan_meals (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
@@ -823,7 +824,7 @@ func migrate(useSQLite bool) error {
 		}
 	} else {
 		queries = []string{
-			`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER, phone TEXT);`,
+			`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER, phone TEXT, contact_preference TEXT);`,
 			`CREATE TABLE IF NOT EXISTS histories (id SERIAL PRIMARY KEY, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS meal_plans (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS plan_meals (id SERIAL PRIMARY KEY, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
@@ -978,6 +979,7 @@ func migrate(useSQLite bool) error {
 	// Add nutritionist_id column to users table if it doesn't exist
 	db.Exec(`ALTER TABLE users ADD COLUMN nutritionist_id INTEGER;`)
 	db.Exec(`ALTER TABLE users ADD COLUMN phone TEXT;`)
+	db.Exec(`ALTER TABLE users ADD COLUMN contact_preference TEXT;`)
 
 	// Add nutritionist_id column to appointments table if it doesn't exist
 	db.Exec(`ALTER TABLE appointments ADD COLUMN nutritionist_id INTEGER;`)
@@ -1147,29 +1149,31 @@ func meHandler(c *gin.Context) {
 	var nutritionistName sql.NullString
 	var nutritionistEmail sql.NullString
 	var phone sql.NullString
+	var contactPreference sql.NullString
 	err := db.QueryRow(`
-		SELECT u.nutritionist_id, n.name, n.email, u.phone
+		SELECT u.nutritionist_id, n.name, n.email, u.phone, u.contact_preference
 		FROM users u
 		LEFT JOIN users n ON u.nutritionist_id = n.id
 		WHERE u.id = ?
-	`, claims.UserID).Scan(&nutritionistID, &nutritionistName, &nutritionistEmail, &phone)
+	`, claims.UserID).Scan(&nutritionistID, &nutritionistName, &nutritionistEmail, &phone, &contactPreference)
 
 	if err != nil && err != sql.ErrNoRows {
 		log.Printf("[Me] Error scanning nutritionist: %v", err)
 	}
 
 	response := gin.H{
-		"user_id":          claims.UserID,
-		"name":             claims.Name,
-		"email":            claims.Email,
-		"role":             claims.Role,
-		"picture":          claims.Picture,
-		"given_name":       claims.GivenName,
-		"family_name":      claims.FamilyName,
-		"locale":           claims.Locale,
-		"phone":            phone.String,
-		"meal_times":       mealTimes,
-		"enable_reminders": enableReminders,
+		"user_id":            claims.UserID,
+		"name":               claims.Name,
+		"email":              claims.Email,
+		"role":               claims.Role,
+		"picture":            claims.Picture,
+		"given_name":         claims.GivenName,
+		"family_name":        claims.FamilyName,
+		"locale":             claims.Locale,
+		"phone":              phone.String,
+		"contact_preference": contactPreference.String,
+		"meal_times":         mealTimes,
+		"enable_reminders":   enableReminders,
 	}
 
 	// Add nutritionist info if assigned
@@ -1189,7 +1193,9 @@ func meHandler(c *gin.Context) {
 func updateContactPhoneHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 	var request struct {
-		Phone string `json:"phone"`
+		Name              string `json:"name"`
+		Phone             string `json:"phone"`
+		ContactPreference string `json:"contact_preference"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "datos de contacto inválidos"})
@@ -1197,18 +1203,54 @@ func updateContactPhoneHandler(c *gin.Context) {
 	}
 
 	phone := strings.TrimSpace(request.Phone)
+	name := strings.TrimSpace(request.Name)
+	preference := strings.TrimSpace(request.ContactPreference)
+	if preference != "app" && preference != "phone" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "elige cómo prefieres que nos comuniquemos contigo"})
+		return
+	}
+	if preference == "phone" && phone == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "el teléfono es obligatorio para esta preferencia"})
+		return
+	}
 	if len(phone) > 30 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "el teléfono no puede superar 30 caracteres"})
 		return
 	}
+	if len(name) > 120 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "el nombre no puede superar 120 caracteres"})
+		return
+	}
 
-	if _, err := db.Exec(`UPDATE users SET phone = ? WHERE id = ?`, phone, claims.UserID); err != nil {
+	query := `UPDATE users SET phone = ?, contact_preference = ?`
+	args := []interface{}{phone, preference}
+	if name != "" {
+		query += `, name = ?`
+		args = append(args, name)
+	}
+	query += ` WHERE id = ?`
+	args = append(args, claims.UserID)
+	if _, err := db.Exec(query, args...); err != nil {
 		log.Printf("[Contact] Error updating phone for user %d: %v", claims.UserID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo guardar el teléfono"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"phone": phone})
+	var savedName string
+	if err := db.QueryRow(`SELECT name FROM users WHERE id = ?`, claims.UserID).Scan(&savedName); err != nil {
+		log.Printf("[Contact] Error reading updated name for user %d: %v", claims.UserID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudieron leer los datos actualizados"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"name":               savedName,
+		"phone":              phone,
+		"contact_preference": preference,
+	})
+}
+
+func updateProfileHandler(c *gin.Context) {
+	updateContactPhoneHandler(c)
 }
 
 func createHistoryHandler(c *gin.Context) {

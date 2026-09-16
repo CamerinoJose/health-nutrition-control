@@ -12,6 +12,7 @@ export default function Profile({ token, profile }) {
   const [showRecommendations, setShowRecommendations] = useState(false);
   const [showHealthForm, setShowHealthForm] = useState(false);
   const [phone, setPhone] = useState(profile?.phone || '');
+  const [contactPreference, setContactPreference] = useState(profile?.contact_preference || '');
   const [savingPhone, setSavingPhone] = useState(false);
   const [phoneMessage, setPhoneMessage] = useState('');
 
@@ -48,8 +49,12 @@ export default function Profile({ token, profile }) {
     setSavingPhone(true);
     setPhoneMessage('');
     try {
-      const res = await api.put('/me/contact', { phone: phone.trim() });
+      const res = await api.put('/me/contact', {
+        phone: phone.trim(),
+        contact_preference: contactPreference,
+      });
       setPhone(res.data.phone || '');
+      setContactPreference(res.data.contact_preference || contactPreference);
       setPhoneMessage('Teléfono guardado');
     } catch (error) {
       console.error('Error saving phone:', error);
@@ -299,6 +304,24 @@ export default function Profile({ token, profile }) {
               placeholder="Opcional"
               aria-label="Teléfono de contacto"
             />
+            <label>
+              <input
+                type="radio"
+                name="contact-preference"
+                checked={contactPreference === 'phone'}
+                onChange={() => setContactPreference('phone')}
+              />
+              Contactarme por teléfono o WhatsApp
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="contact-preference"
+                checked={contactPreference === 'app'}
+                onChange={() => setContactPreference('app')}
+              />
+              Comunicarme solo por la app
+            </label>
             <button type="button" className="btn-health-profile" onClick={savePhone} disabled={savingPhone}>
               {savingPhone ? 'Guardando...' : 'Guardar teléfono'}
             </button>

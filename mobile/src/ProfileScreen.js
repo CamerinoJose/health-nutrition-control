@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Button, ActivityIndicator, Alert, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, Button, ActivityIndicator, Alert, StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from './api';
 import HealthProfileForm from './HealthProfileForm';
 
 const HEALTH_PROFILE_STORAGE_KEY = 'bienestar_health_profile_v1';
 
-export default function ProfileScreen({ onNavigate }) {
+export default function ProfileScreen({ onNavigate, accountProfile, onAccountProfileUpdated }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [accountName, setAccountName] = useState(accountProfile?.name || '');
+  const [accountPhone, setAccountPhone] = useState(accountProfile?.phone || '');
+  const [contactPreference, setContactPreference] = useState(accountProfile?.contact_preference || 'app');
+  const [savingAccount, setSavingAccount] = useState(false);
 
   useEffect(() => {
     loadProfile();
@@ -52,6 +56,37 @@ export default function ProfileScreen({ onNavigate }) {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const saveAccountProfile = async () => {
+    const phone = accountPhone.trim();
+    if (contactPreference === 'phone' && !phone) {
+      Alert.alert('Teléfono requerido', 'Agrega un número de teléfono para poder comunicarnos contigo.');
+      return;
+    }
+    setSavingAccount(true);
+    try {
+      const response = await api.put('/me/profile', {
+        name: accountName.trim(),
+        phone,
+        contact_preference: contactPreference,
+      });
+      const updated = {
+        ...accountProfile,
+        name: response.data.name || accountName.trim(),
+        phone: response.data.phone || phone,
+        contact_preference: response.data.contact_preference || contactPreference,
+      };
+      setAccountName(updated.name);
+      setAccountPhone(updated.phone);
+      if (onAccountProfileUpdated) onAccountProfileUpdated(updated);
+      Alert.alert('Éxito', 'Datos personales actualizados');
+    } catch (error) {
+      console.error('Error updating account profile:', error);
+      Alert.alert('Error', 'No se pudieron actualizar tus datos personales');
+    } finally {
+      setSavingAccount(false);
     }
   };
 
@@ -123,6 +158,41 @@ export default function ProfileScreen({ onNavigate }) {
     <ScrollView style={{flex: 1}}>
       <View style={styles.container}>
         <Text style={styles.title}>👤 Perfil de Salud</Text>
+        <View style={styles.accountSection}>
+          <Text style={styles.sectionTitle}>📇 Datos personales</Text>
+          <Text style={styles.fieldLabel}>Nombre</Text>
+          <TextInput
+            style={styles.accountInput}
+            value={accountName}
+            onChangeText={setAccountName}
+            maxLength={120}
+          />
+          <Text style={styles.fieldLabel}>Correo</Text>
+          <Text style={styles.readOnlyValue}>{accountProfile?.email || 'No disponible'}</Text>
+          <Text style={styles.fieldLabel}>
+            Teléfono {contactPreference === 'phone' ? '*' : '(opcional)'}
+          </Text>
+          <TextInput
+            style={styles.accountInput}
+            value={accountPhone}
+            onChangeText={setAccountPhone}
+            keyboardType="phone-pad"
+            maxLength={30}
+            placeholder="Ej. 55 1234 5678"
+          />
+          <Text style={styles.fieldLabel}>Preferencia de comunicación</Text>
+          <TouchableOpacity style={styles.preferenceRow} onPress={() => setContactPreference('phone')}>
+            <Text style={styles.checkbox}>{contactPreference === 'phone' ? '☑' : '☐'}</Text>
+            <Text>Pueden contactarme por teléfono o WhatsApp</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.preferenceRow} onPress={() => setContactPreference('app')}>
+            <Text style={styles.checkbox}>{contactPreference === 'app' ? '☑' : '☐'}</Text>
+            <Text>Prefiero comunicarme solo por la app</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.saveAccountButton} onPress={saveAccountProfile} disabled={savingAccount}>
+            <Text style={styles.saveAccountText}>{savingAccount ? 'Guardando...' : 'Guardar datos personales'}</Text>
+          </TouchableOpacity>
+        </View>
         
         {/* Herramientas para Diabetes */}
         <View style={styles.diabetesSection}>
@@ -204,6 +274,53 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 12,
+  },
+  accountSection: {
+    backgroundColor: '#eef4ff',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  fieldLabel: {
+    fontWeight: '600',
+    color: '#374151',
+    marginTop: 8,
+    marginBottom: 5,
+  },
+  accountInput: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    padding: 11,
+    fontSize: 16,
+  },
+  readOnlyValue: {
+    backgroundColor: '#e5e7eb',
+    borderRadius: 8,
+    color: '#4b5563',
+    padding: 11,
+  },
+  saveAccountButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    marginTop: 16,
+    padding: 13,
+  },
+  saveAccountText: {
+    color: '#fff',
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  preferenceRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    paddingVertical: 6,
+  },
+  checkbox: {
+    color: '#2563eb',
+    fontSize: 22,
+    marginRight: 8,
   },
   toolButton: {
     flexDirection: 'row',

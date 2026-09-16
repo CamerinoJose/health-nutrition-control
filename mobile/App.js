@@ -36,6 +36,7 @@ import NutritionistCalendarScreen from './src/nutritionist/CalendarScreen'
 import NutritionistRecipesScreen from './src/nutritionist/RecipesScreen'
 import NutritionistRecommendationsScreen from './src/nutritionist/RecommendationsScreen'
 import NutritionistMealPlansScreen from './src/nutritionist/MealPlansScreen'
+import ContactRequiredScreen from './src/ContactRequiredScreen'
 
 // Configura tu URL de backend
 const BACKEND_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://health-nutrition-control.onrender.com').replace(/\/api$/, '')
@@ -319,9 +320,11 @@ function AppContent() {
 
     try {
       console.log('[completeLogin] Fetching profile...');
-      await fetchProfile(token);
+      const loadedProfile = await fetchProfile(token);
       console.log('[completeLogin] Profile fetched successfully, setting view to dashboard');
-      setView(nextView);
+      setView(loadedProfile?.contact_preference && (loadedProfile.contact_preference === 'app' || loadedProfile.phone)
+        ? nextView
+        : 'required-contact');
     } catch (e) {
       console.warn('[completeLogin] Profile fetch failed:', e);
       setView(nextView);
@@ -465,9 +468,14 @@ function AppContent() {
       };
 
         setProfile(enhancedProfile)
+        if (!enhancedProfile.contact_preference || (enhancedProfile.contact_preference === 'phone' && !enhancedProfile.phone)) {
+          setView('required-contact')
+        }
 
           // Send nutritionists/admins to dashboard by default
-          if ((res.data?.role === 'nutritionist' || res.data?.role === 'admin')) {
+          const contactIncomplete = !enhancedProfile.contact_preference ||
+            (enhancedProfile.contact_preference === 'phone' && !enhancedProfile.phone)
+          if (!contactIncomplete && (res.data?.role === 'nutritionist' || res.data?.role === 'admin')) {
             setView(prev => (prev === 'nutri-patients' || prev === 'home') ? 'dashboard' : prev)
           }
 
@@ -475,6 +483,7 @@ function AppContent() {
         await loadTodayMeals(tk);
         // Load upcoming appointments summary
         await loadUpcomingAppointments(tk);
+        return enhancedProfile;
     }catch(e){ 
       console.warn('fetchProfile: Error -', e.message, e.response?.status, e.response?.data);
       throw e;
@@ -714,6 +723,17 @@ function AppContent() {
   }
 
   const renderContent = () => {
+    if (view === 'required-contact') {
+      return (
+        <ContactRequiredScreen
+          profile={profile}
+          onSaved={(updatedProfile) => {
+            setProfile(updatedProfile)
+            setView('dashboard')
+          }}
+        />
+      )
+    }
     if (view === 'medicinas') {
       console.log('[renderContent] Showing MedicinesScreen');
       return <MedicinesScreen onBack={() => { console.log('[MedicinesScreen] onBack called, setting view to home'); setView('home'); }} />;
@@ -724,7 +744,13 @@ function AppContent() {
     }
     if (view === 'profile') {
       const ProfileScreen = require('./src/ProfileScreen').default;
-      return <ProfileScreen onNavigate={(v) => setView(v)} />;
+      return (
+        <ProfileScreen
+          onNavigate={(v) => setView(v)}
+          accountProfile={profile}
+          onAccountProfileUpdated={setProfile}
+        />
+      );
     }
     try {
       if (view === 'login') {

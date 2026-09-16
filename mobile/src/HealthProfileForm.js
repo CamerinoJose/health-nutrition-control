@@ -258,6 +258,11 @@ export default function HealthProfileForm({ onSubmit, initialData }) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title}>Registro de Salud del Paciente</Text>
+      <Text style={styles.privacyNotice}>
+        Estos datos ayudan a tu nutriólogo o profesional relacionado a personalizar tu seguimiento,
+        detectar cambios y darte recomendaciones más útiles. Comparte solo lo que te sientas cómodo
+        proporcionando; la app no sustituye una consulta médica ni sirve para diagnósticos de emergencia.
+      </Text>
       <TextInput style={[styles.input, errors.age && styles.inputError]} placeholder="Edad" keyboardType="numeric" value={form.age} onChangeText={v => handleChange('age', v)} />
       {errors.age && <Text style={styles.errorText}>{errors.age}</Text>}
 
@@ -387,6 +392,7 @@ const styles = StyleSheet.create({
     errorText: { color: 'red', marginBottom: 8 },
   container: { padding: 20 },
   title: { fontSize: 20, fontWeight: 'bold', marginBottom: 20 },
+  privacyNotice: { backgroundColor: '#eef4ff', borderRadius: 8, color: '#374151', lineHeight: 20, marginBottom: 16, padding: 12 },
   label: { marginBottom: 6, fontWeight: '600' },
   input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 5, padding: 10, marginBottom: 10 },
   pickerWrapper: { borderWidth: 1, borderColor: '#ccc', borderRadius: 5, marginBottom: 10, overflow: 'hidden' },
