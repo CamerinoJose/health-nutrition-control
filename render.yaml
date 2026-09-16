@@ -20,7 +20,7 @@ services:
       - key: JWT_SECRET
         generateValue: true  # Render will generate a secure random value
       - key: USE_SQLITE
-        value: "true"
+        value: "false"
       - key: DB_PATH
         value: ./data.db
     healthCheckPath: /health
