@@ -186,6 +186,20 @@ CORS_ORIGINS=https://tu-frontend.vercel.app
 
 ## Troubleshooting
 
+### Google OAuth shows `Not found` at `/callback`
+
+The frontend is a single-page application, so the static host must rewrite
+unknown application routes to `/index.html`. In the Render Static Site
+dashboard, add this rewrite rule:
+
+| Source | Destination | Action |
+|---|---|---|
+| `/*` | `/index.html` | Rewrite |
+
+The repository also includes `frontend/public/_redirects` for hosts that
+support Netlify-style SPA rules. After adding the Render rule, redeploy the
+frontend and retry Google login.
+
 ### Error: API calls failing
 - Verifica que `VITE_API_URL` esté configurada
 - Verifica CORS en el backend

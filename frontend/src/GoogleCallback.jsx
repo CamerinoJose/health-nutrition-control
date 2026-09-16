@@ -15,7 +15,10 @@ export default function GoogleCallback() {
       // Notify parent window (if opened from popup) and close immediately
       if (window.opener) {
         window.opener.postMessage({ type: 'oauth-token', token }, '*');
-        window.close();
+        setTimeout(() => window.close(), 100);
+      } else {
+        // A direct visit should still return to the application after saving.
+        window.location.replace('/');
       }
       // If not opened from popup, just stay and show message
     } else if (error) {
