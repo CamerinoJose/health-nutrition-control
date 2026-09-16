@@ -5,7 +5,9 @@ CREATE TABLE users (
     name TEXT,
     email TEXT UNIQUE,
     password TEXT,
-    role TEXT
+    role TEXT,
+    nutritionist_id INTEGER,
+    phone TEXT
 );
 
 CREATE TABLE histories (

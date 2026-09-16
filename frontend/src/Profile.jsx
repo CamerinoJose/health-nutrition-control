@@ -11,6 +11,9 @@ export default function Profile({ token, profile }) {
   const [loading, setLoading] = useState(true);
   const [showRecommendations, setShowRecommendations] = useState(false);
   const [showHealthForm, setShowHealthForm] = useState(false);
+  const [phone, setPhone] = useState(profile?.phone || '');
+  const [savingPhone, setSavingPhone] = useState(false);
+  const [phoneMessage, setPhoneMessage] = useState('');
 
   useEffect(() => {
     loadHistory();
@@ -38,6 +41,21 @@ export default function Profile({ token, profile }) {
       setHealthProfile(res.data);
     } catch (error) {
       console.error('Error loading health profile:', error);
+    }
+  }
+
+  async function savePhone() {
+    setSavingPhone(true);
+    setPhoneMessage('');
+    try {
+      const res = await api.put('/me/contact', { phone: phone.trim() });
+      setPhone(res.data.phone || '');
+      setPhoneMessage('Teléfono guardado');
+    } catch (error) {
+      console.error('Error saving phone:', error);
+      setPhoneMessage('No se pudo guardar el teléfono');
+    } finally {
+      setSavingPhone(false);
     }
   }
 
@@ -270,6 +288,21 @@ export default function Profile({ token, profile }) {
           <div className="info-item">
             <label>{t('email')}:</label>
             <span>{profile.email}</span>
+          </div>
+          <div className="info-item">
+            <label>Teléfono de contacto:</label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              maxLength={30}
+              placeholder="Opcional"
+              aria-label="Teléfono de contacto"
+            />
+            <button type="button" className="btn-health-profile" onClick={savePhone} disabled={savingPhone}>
+              {savingPhone ? 'Guardando...' : 'Guardar teléfono'}
+            </button>
+            {phoneMessage && <small>{phoneMessage}</small>}
           </div>
           <div className="info-item">
             <label>{t('role')}:</label>

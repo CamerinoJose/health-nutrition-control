@@ -580,6 +580,7 @@ func main() {
 
 			// ...existing code...
 			auth.GET("/me", meHandler)
+			auth.PUT("/me/contact", updateContactPhoneHandler)
 			auth.POST("/history", createHistoryHandler)
 			auth.GET("/history", listHistoryHandler)
 			auth.POST("/ocr", ocrHandler)
@@ -678,7 +679,7 @@ func migrate(useSQLite bool) error {
 	var queries []string
 	if useSQLite {
 		queries = []string{
-			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER);`,
+			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER, phone TEXT);`,
 			`CREATE TABLE IF NOT EXISTS histories (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS meal_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS plan_meals (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
@@ -822,7 +823,7 @@ func migrate(useSQLite bool) error {
 		}
 	} else {
 		queries = []string{
-			`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER);`,
+			`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER, phone TEXT);`,
 			`CREATE TABLE IF NOT EXISTS histories (id SERIAL PRIMARY KEY, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS meal_plans (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
 			`CREATE TABLE IF NOT EXISTS plan_meals (id SERIAL PRIMARY KEY, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
@@ -976,6 +977,7 @@ func migrate(useSQLite bool) error {
 
 	// Add nutritionist_id column to users table if it doesn't exist
 	db.Exec(`ALTER TABLE users ADD COLUMN nutritionist_id INTEGER;`)
+	db.Exec(`ALTER TABLE users ADD COLUMN phone TEXT;`)
 
 	// Add nutritionist_id column to appointments table if it doesn't exist
 	db.Exec(`ALTER TABLE appointments ADD COLUMN nutritionist_id INTEGER;`)
@@ -1144,12 +1146,13 @@ func meHandler(c *gin.Context) {
 	var nutritionistID sql.NullInt64
 	var nutritionistName sql.NullString
 	var nutritionistEmail sql.NullString
+	var phone sql.NullString
 	err := db.QueryRow(`
-		SELECT u.nutritionist_id, n.name, n.email
+		SELECT u.nutritionist_id, n.name, n.email, u.phone
 		FROM users u
 		LEFT JOIN users n ON u.nutritionist_id = n.id
 		WHERE u.id = ?
-	`, claims.UserID).Scan(&nutritionistID, &nutritionistName, &nutritionistEmail)
+	`, claims.UserID).Scan(&nutritionistID, &nutritionistName, &nutritionistEmail, &phone)
 
 	if err != nil && err != sql.ErrNoRows {
 		log.Printf("[Me] Error scanning nutritionist: %v", err)
@@ -1164,6 +1167,7 @@ func meHandler(c *gin.Context) {
 		"given_name":       claims.GivenName,
 		"family_name":      claims.FamilyName,
 		"locale":           claims.Locale,
+		"phone":            phone.String,
 		"meal_times":       mealTimes,
 		"enable_reminders": enableReminders,
 	}
@@ -1180,6 +1184,31 @@ func meHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+func updateContactPhoneHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+	var request struct {
+		Phone string `json:"phone"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "datos de contacto inválidos"})
+		return
+	}
+
+	phone := strings.TrimSpace(request.Phone)
+	if len(phone) > 30 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "el teléfono no puede superar 30 caracteres"})
+		return
+	}
+
+	if _, err := db.Exec(`UPDATE users SET phone = ? WHERE id = ?`, phone, claims.UserID); err != nil {
+		log.Printf("[Contact] Error updating phone for user %d: %v", claims.UserID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo guardar el teléfono"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"phone": phone})
 }
 
 func createHistoryHandler(c *gin.Context) {
@@ -1808,6 +1837,17 @@ func maskName(name string) string {
 	return string(runes[0]) + "***"
 }
 
+func maskPhone(phone string) string {
+	runes := []rune(strings.TrimSpace(phone))
+	if len(runes) <= 4 {
+		if len(runes) == 0 {
+			return ""
+		}
+		return "***"
+	}
+	return "***" + string(runes[len(runes)-4:])
+}
+
 func adminMetricsHandler(c *gin.Context) {
 	metrics := map[string]int{
 		"total_users":            0,
@@ -1863,7 +1903,7 @@ func nutritionistOrAdminMiddleware() gin.HandlerFunc {
 }
 
 func listUsersHandler(c *gin.Context) {
-	rows, err := db.Query(`SELECT id, name, email, role FROM users`)
+	rows, err := db.Query(`SELECT id, name, email, role, phone FROM users`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch users"})
 		return
@@ -1873,8 +1913,8 @@ func listUsersHandler(c *gin.Context) {
 	var users []map[string]interface{}
 	for rows.Next() {
 		var id int
-		var name, email, role string
-		if err := rows.Scan(&id, &name, &email, &role); err != nil {
+		var name, email, role, phone string
+		if err := rows.Scan(&id, &name, &email, &role, &phone); err != nil {
 			continue
 		}
 		user := map[string]interface{}{
@@ -1884,9 +1924,11 @@ func listUsersHandler(c *gin.Context) {
 		if isPrivacyAdmin(c) {
 			user["name"] = name
 			user["email"] = email
+			user["phone"] = phone
 		} else {
 			user["name"] = maskName(name)
 			user["email"] = maskEmail(email)
+			user["phone"] = maskPhone(phone)
 		}
 		users = append(users, user)
 	}
