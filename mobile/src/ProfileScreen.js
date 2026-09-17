@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Button, ActivityIndicator, Alert, StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, Button, ActivityIndicator, Alert, StyleSheet, ScrollView, TouchableOpacity, TextInput, Image } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from './api';
 import HealthProfileForm from './HealthProfileForm';
@@ -157,7 +157,22 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
   return (
     <ScrollView style={{flex: 1}}>
       <View style={styles.container}>
-        <Text style={styles.title}>👤 Mi Perfil</Text>
+        <View style={styles.profileHeading}>
+          {accountProfile?.picture ? (
+            <Image
+              source={{ uri: accountProfile.picture }}
+              style={styles.profilePicture}
+              accessibilityLabel="Foto de perfil de Google"
+            />
+          ) : (
+            <View style={styles.profileInitials}>
+              <Text style={styles.profileInitialsText}>
+                {(accountProfile?.name || 'U').trim().charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+          <Text style={styles.title}>Mi Perfil</Text>
+        </View>
         <View style={styles.accountSection}>
           <Text style={styles.sectionTitle}>📇 Datos personales</Text>
           <Text style={styles.fieldLabel}>Nombre</Text>
@@ -169,6 +184,22 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
           />
           <Text style={styles.fieldLabel}>Correo</Text>
           <Text style={styles.readOnlyValue}>{accountProfile?.email || 'No disponible'}</Text>
+          {(accountProfile?.given_name || accountProfile?.family_name) && (
+            <View style={styles.googleIdentity}>
+              {accountProfile?.given_name && (
+                <View style={styles.googleIdentityField}>
+                  <Text style={styles.fieldLabel}>Nombre de Google</Text>
+                  <Text style={styles.readOnlyValue}>{accountProfile.given_name}</Text>
+                </View>
+              )}
+              {accountProfile?.family_name && (
+                <View style={styles.googleIdentityField}>
+                  <Text style={styles.fieldLabel}>Apellido de Google</Text>
+                  <Text style={styles.readOnlyValue}>{accountProfile.family_name}</Text>
+                </View>
+              )}
+            </View>
+          )}
           <Text style={styles.fieldLabel}>
             Teléfono {contactPreference === 'phone' ? '*' : '(opcional)'}
           </Text>
@@ -255,6 +286,39 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     marginBottom: 20,
+  },
+  profileHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  profilePicture: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    marginRight: 14,
+  },
+  profileInitials: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    marginRight: 14,
+    backgroundColor: '#1e88e5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileInitialsText: {
+    color: '#fff',
+    fontSize: 26,
+    fontWeight: '700',
+  },
+  googleIdentity: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 4,
+  },
+  googleIdentityField: {
+    flex: 1,
   },
   subtitle: {
     fontSize: 18,
