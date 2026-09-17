@@ -12,7 +12,7 @@ import (
 
 // listPatientsHandler returns all patients (users with role 'user')
 func listPatientsHandler(c *gin.Context) {
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT u.id, u.name, u.email, u.role,
 			(SELECT COUNT(*) FROM appointments WHERE user_id = u.id) as appointment_count,
 			(SELECT MAX(date) FROM histories WHERE user_id = u.id) as last_visit
@@ -57,7 +57,7 @@ func getPatientDetailsHandler(c *gin.Context) {
 
 	var id int
 	var name, email, role string
-	err := db.QueryRow(`SELECT id, name, email, role FROM users WHERE id = ?`, patientID).
+	err := queryRowDB(`SELECT id, name, email, role FROM users WHERE id = ?`, patientID).
 		Scan(&id, &name, &email, &role)
 
 	if err != nil {
@@ -71,7 +71,7 @@ func getPatientDetailsHandler(c *gin.Context) {
 	var height, weight, targetWeight, fatPercentage, musclePercentage sql.NullFloat64
 	var sex, medicalConditions, medications, allergies, activityLevel, goals sql.NullString
 
-	err = db.QueryRow(`
+	err = queryRowDB(`
 		SELECT age, sex, height, weight, target_weight, fat_percentage, muscle_percentage,
 			medical_conditions, medications, allergies, activity_level, goals
 		FROM health_profiles WHERE user_id = ?
@@ -99,7 +99,7 @@ func getPatientDetailsHandler(c *gin.Context) {
 	var latestHistory map[string]interface{}
 	var histDate string
 	var histWeight, histFat, histMuscle float64
-	err = db.QueryRow(`
+	err = queryRowDB(`
 		SELECT date, weight, fat_percentage, muscle_percentage 
 		FROM histories 
 		WHERE user_id = ? 
@@ -117,7 +117,7 @@ func getPatientDetailsHandler(c *gin.Context) {
 
 	// Get appointment count
 	var appointmentCount int
-	db.QueryRow(`SELECT COUNT(*) FROM appointments WHERE user_id = ?`, patientID).Scan(&appointmentCount)
+	queryRowDB(`SELECT COUNT(*) FROM appointments WHERE user_id = ?`, patientID).Scan(&appointmentCount)
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":                id,
@@ -134,7 +134,7 @@ func getPatientDetailsHandler(c *gin.Context) {
 func getPatientHistoryHandler(c *gin.Context) {
 	patientID := c.Param("id")
 
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT id, date, weight, fat_percentage, muscle_percentage
 		FROM histories
 		WHERE user_id = ?
@@ -190,7 +190,7 @@ func createRecipeHandler(c *gin.Context) {
 		return
 	}
 
-	result, err := db.Exec(`
+	result, err := execDB(`
 		INSERT INTO recipes (name, category, prep_time, servings, calories, protein, carbs, fat, ingredients, instructions, image_url)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, req.Name, req.Category, req.PrepTime, req.Servings, req.Calories, req.Protein, req.Carbs, req.Fat, req.Ingredients, req.Instructions, req.ImageURL)
@@ -228,7 +228,7 @@ func updateRecipeHandler(c *gin.Context) {
 		return
 	}
 
-	_, err := db.Exec(`
+	_, err := execDB(`
 		UPDATE recipes 
 		SET name = ?, category = ?, prep_time = ?, servings = ?, calories = ?, 
 			protein = ?, carbs = ?, fat = ?, ingredients = ?, instructions = ?, image_url = ?
@@ -248,7 +248,7 @@ func updateRecipeHandler(c *gin.Context) {
 func deleteRecipeHandler(c *gin.Context) {
 	recipeID := c.Param("id")
 
-	_, err := db.Exec(`DELETE FROM recipes WHERE id = ?`, recipeID)
+	_, err := execDB(`DELETE FROM recipes WHERE id = ?`, recipeID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error deleting recipe: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete recipe"})
@@ -284,7 +284,7 @@ func createRecommendationHandler(c *gin.Context) {
 		appointmentID = nil
 	}
 
-	result, err := db.Exec(`
+	result, err := execDB(`
 		INSERT INTO recommendations (nutritionist_id, patient_id, appointment_id, recommendation_text, diet_changes, exercise_plan, next_goals, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, claims.UserID, req.PatientID, appointmentID, req.RecommendationText, req.DietChanges, req.ExercisePlan, req.NextGoals, time.Now().Format("2006-01-02 15:04:05"))
@@ -299,7 +299,7 @@ func createRecommendationHandler(c *gin.Context) {
 
 	// Update appointment status if provided
 	if req.AppointmentID != nil && *req.AppointmentID > 0 {
-		db.Exec(`UPDATE appointments SET status = 'completed' WHERE id = ?`, *req.AppointmentID)
+		execDB(`UPDATE appointments SET status = 'completed' WHERE id = ?`, *req.AppointmentID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"id": recommendationID, "message": "recommendation created successfully"})
@@ -309,7 +309,7 @@ func createRecommendationHandler(c *gin.Context) {
 func getRecommendationsHandler(c *gin.Context) {
 	patientID := c.Param("patient_id")
 
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT r.id, r.nutritionist_id, r.appointment_id, r.recommendation_text, 
 			r.diet_changes, r.exercise_plan, r.next_goals, r.created_at,
 			u.name as nutritionist_name
@@ -362,7 +362,7 @@ func getRecommendationsHandler(c *gin.Context) {
 func getNutritionistAppointmentsHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT a.id, a.user_id, u.name as patient_name, a.title, a.description, 
 			a.appointment_date, a.appointment_time, a.status, a.notes, a.created_at
 		FROM appointments a
@@ -422,7 +422,7 @@ func updateAppointmentNotesHandler(c *gin.Context) {
 		return
 	}
 
-	_, err := db.Exec(`
+	_, err := execDB(`
 		UPDATE appointments 
 		SET notes = ?, status = ?
 		WHERE id = ?
@@ -455,14 +455,14 @@ func proposeAppointmentChangeHandler(c *gin.Context) {
 
 	// Get appointment details to find patient
 	var userID int
-	err := db.QueryRow(`SELECT user_id FROM appointments WHERE id = ?`, appointmentID).Scan(&userID)
+	err := queryRowDB(`SELECT user_id FROM appointments WHERE id = ?`, appointmentID).Scan(&userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "appointment not found"})
 		return
 	}
 
 	// Create change proposal
-	result, err := db.Exec(`
+	result, err := execDB(`
 		INSERT INTO appointment_changes (appointment_id, proposed_by, new_date, new_time, reason, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, appointmentID, claims.UserID, req.NewDate, req.NewTime, req.Reason, time.Now().Format("2006-01-02 15:04:05"))
@@ -476,7 +476,7 @@ func proposeAppointmentChangeHandler(c *gin.Context) {
 	changeID, _ := result.LastInsertId()
 
 	// Create notification for patient
-	db.Exec(`
+	execDB(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, created_at)
 		VALUES (?, 'appointment_change', 'Cambio de Cita Propuesto', ?, ?, ?)
 	`, userID, "Tu nutrióloga ha propuesto un cambio en tu cita. Por favor revisa y confirma.", changeID, time.Now().Format("2006-01-02 15:04:05"))
@@ -491,7 +491,7 @@ func proposeAppointmentChangeHandler(c *gin.Context) {
 func getNutritionistAvailabilityHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT id, day_of_week, start_time, end_time, is_available
 		FROM nutritionist_availability
 		WHERE nutritionist_id = ?
@@ -542,7 +542,7 @@ func setNutritionistAvailabilityHandler(c *gin.Context) {
 		return
 	}
 
-	_, err := db.Exec(`
+	_, err := execDB(`
 		INSERT INTO nutritionist_availability (nutritionist_id, day_of_week, start_time, end_time, is_available)
 		VALUES (?, ?, ?, ?, ?)
 	`, claims.UserID, req.DayOfWeek, req.StartTime, req.EndTime, req.IsAvailable)
@@ -576,7 +576,7 @@ func getAvailableSlotsHandler(c *gin.Context) {
 	dayOfWeek := int(date.Weekday())
 
 	// Get availability for that day
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT start_time, end_time
 		FROM nutritionist_availability
 		WHERE nutritionist_id = ? AND day_of_week = ? AND is_available = 1
@@ -597,7 +597,7 @@ func getAvailableSlotsHandler(c *gin.Context) {
 
 		// Get existing appointments for this time slot
 		var count int
-		db.QueryRow(`
+		queryRowDB(`
 			SELECT COUNT(*) FROM appointments 
 			WHERE appointment_date = ? 
 			AND appointment_time >= ? 
@@ -638,7 +638,7 @@ func createMealPlanForPatientHandler(c *gin.Context) {
 	}
 
 	// Create meal plan
-	result, err := db.Exec(`
+	result, err := execDB(`
 		INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, patientID, req.Name, req.StartDate, req.Snacks, time.Now().Format("2006-01-02 15:04:05"))
@@ -653,7 +653,7 @@ func createMealPlanForPatientHandler(c *gin.Context) {
 
 	// Insert meals
 	for _, meal := range req.Meals {
-		_, err := db.Exec(`
+		_, err := execDB(`
 			INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation)
 			VALUES (?, ?, ?, ?, ?, ?)
 		`, planID, meal.DayOfWeek, meal.MealType, meal.Name, meal.Ingredients, meal.Preparation)
@@ -664,7 +664,7 @@ func createMealPlanForPatientHandler(c *gin.Context) {
 	}
 
 	// Create notification for patient
-	_, err = db.Exec(`
+	_, err = execDB(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, is_read, created_at)
 		VALUES (?, 'meal_plan', 'Nuevo Plan de Comidas', ?, ?, 0, ?)
 	`, patientID, fmt.Sprintf("Tu nutrióloga ha creado un nuevo plan de comidas: %s", req.Name), planID, time.Now().Format("2006-01-02 15:04:05"))
@@ -692,7 +692,7 @@ func getPatientMealPlanHandler(c *gin.Context) {
 		CreatedAt string `json:"created_at"`
 	}
 
-	err := db.QueryRow(`
+	err := queryRowDB(`
 		SELECT id, user_id, name, start_date, snacks, created_at 
 		FROM meal_plans 
 		WHERE user_id = ? 
@@ -706,7 +706,7 @@ func getPatientMealPlanHandler(c *gin.Context) {
 	}
 
 	// Get meals
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT id, plan_id, day_of_week, meal_type, name, ingredients, preparation
 		FROM plan_meals
 		WHERE plan_id = ?

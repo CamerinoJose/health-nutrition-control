@@ -377,15 +377,15 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 
 	// Buscar si ya existe vinculación
 	var userID int
-	err := db.QueryRow("SELECT user_id FROM social_accounts WHERE provider = ? AND provider_user_id = ?", provider, providerUserID).Scan(&userID)
+	err := queryRowDB("SELECT user_id FROM social_accounts WHERE provider = ? AND provider_user_id = ?", provider, providerUserID).Scan(&userID)
 
 	if err == sql.ErrNoRows {
 		// Reutilizar una cuenta local que tenga el mismo correo.
-		err = db.QueryRow("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", email).Scan(&userID)
+		err = queryRowDB("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", email).Scan(&userID)
 		if err == sql.ErrNoRows {
 			// No existe, crear nuevo usuario.
 			hashedPassword := "$2a$10$defaultpasswordforsociallogins"
-			_, createErr := db.Exec(
+			_, createErr := execDB(
 				"INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, 'user')",
 				email, hashedPassword, name,
 			)
@@ -393,7 +393,7 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 				return 0, "", createErr
 			}
 
-			createErr = db.QueryRow("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", email).Scan(&userID)
+			createErr = queryRowDB("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", email).Scan(&userID)
 			if createErr != nil {
 				return 0, "", createErr
 			}
@@ -402,7 +402,7 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 		}
 
 		// Crear la vinculación social para usuarios nuevos o existentes.
-		_, err = db.Exec(
+		_, err = execDB(
 			"INSERT INTO social_accounts (user_id, provider, provider_user_id, email, name, avatar_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
 			userID, provider, providerUserID, email, name, picture,
 		)
@@ -414,7 +414,7 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 	}
 
 	var storedName, storedEmail, storedRole string
-	if err := db.QueryRow("SELECT name, email, role FROM users WHERE id = ?", userID).Scan(&storedName, &storedEmail, &storedRole); err != nil {
+	if err := queryRowDB("SELECT name, email, role FROM users WHERE id = ?", userID).Scan(&storedName, &storedEmail, &storedRole); err != nil {
 		return 0, "", err
 	}
 	if storedName != "" {

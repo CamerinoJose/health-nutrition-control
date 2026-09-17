@@ -44,7 +44,7 @@ func resetPasswordHandler(c *gin.Context) {
 		return
 	}
 	var userID int
-	err := db.QueryRow(`SELECT id FROM users WHERE email = ?`, req.Email).Scan(&userID)
+	err := queryRowDB(`SELECT id FROM users WHERE email = ?`, req.Email).Scan(&userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "usuario no encontrado"})
 		return
@@ -54,7 +54,7 @@ func resetPasswordHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar la contraseña"})
 		return
 	}
-	_, err = db.Exec(`UPDATE users SET password = ? WHERE id = ?`, string(hash), userID)
+	_, err = execDB(`UPDATE users SET password = ? WHERE id = ?`, string(hash), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar la contraseña"})
 		return
@@ -63,6 +63,37 @@ func resetPasswordHandler(c *gin.Context) {
 }
 
 var db *sql.DB
+var usingSQLite bool
+
+func rebindQuery(query string) string {
+	if usingSQLite {
+		return query
+	}
+	var builder strings.Builder
+	placeholder := 1
+	for _, char := range query {
+		if char == '?' {
+			builder.WriteString(fmt.Sprintf("$%d", placeholder))
+			placeholder++
+		} else {
+			builder.WriteRune(char)
+		}
+	}
+	return builder.String()
+}
+
+func execDB(query string, args ...interface{}) (sql.Result, error) {
+	return db.Exec(rebindQuery(query), args...)
+}
+
+func queryDB(query string, args ...interface{}) (*sql.Rows, error) {
+	return db.Query(rebindQuery(query), args...)
+}
+
+func queryRowDB(query string, args ...interface{}) *sql.Row {
+	return db.QueryRow(rebindQuery(query), args...)
+}
+
 var jwtKey []byte
 
 type PushToken struct {
@@ -209,7 +240,11 @@ func checkUpcomingAppointments() {
 	tomorrow := time.Now().Add(24 * time.Hour)
 	tomorrowDate := tomorrow.Format("2006-01-02")
 
-	rows, err := db.Query(`
+	recentReminderCondition := `datetime(n.created_at) >= datetime('now', '-24 hours')`
+	if !usingSQLite {
+		recentReminderCondition = `n.created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'`
+	}
+	rows, err := queryDB(fmt.Sprintf(`
 		SELECT a.id, a.user_id, a.title, a.appointment_date, a.appointment_time
 		FROM appointments a
 		WHERE a.appointment_date = ?
@@ -220,9 +255,9 @@ func checkUpcomingAppointments() {
 			WHERE n.user_id = a.user_id
 			AND n.type = 'appointment_reminder'
 			AND n.related_id = a.id
-			AND datetime(n.created_at) >= datetime('now', '-24 hours')
+			AND %s
 		)
-	`, tomorrowDate)
+	`, recentReminderCondition), tomorrowDate)
 
 	if err != nil {
 		log.Printf("[Reminders] Error querying appointments: %v", err)
@@ -241,9 +276,9 @@ func checkUpcomingAppointments() {
 
 		// Create reminder notification
 		message := fmt.Sprintf("Recordatorio: Tienes una cita mañana '%s' el %s a las %s", title, aptDate, aptTime)
-		_, err = db.Exec(`
+		_, err = execDB(`
 			INSERT INTO notifications (user_id, type, title, message, related_id, is_read, created_at)
-			VALUES (?, 'appointment_reminder', 'Recordatorio de Cita', ?, ?, 0, datetime('now'))
+			VALUES (?, 'appointment_reminder', 'Recordatorio de Cita', ?, ?, FALSE, CURRENT_TIMESTAMP)
 		`, userID, message, aptID)
 
 		if err != nil {
@@ -283,7 +318,7 @@ func main() {
 		log.Println("✅ Successfully connected to SQLite database!")
 
 		// SQLite foreign keys support
-		_, err = db.Exec("PRAGMA foreign_keys = ON")
+		_, err = execDB("PRAGMA foreign_keys = ON")
 		if err != nil {
 			log.Fatal("Failed to enable foreign keys: ", err)
 		}
@@ -314,7 +349,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("SQLite fallback ping failed: %v", err)
 			}
-			_, err = db.Exec("PRAGMA foreign_keys = ON")
+			_, err = execDB("PRAGMA foreign_keys = ON")
 			if err != nil {
 				log.Fatal("Failed to enable foreign keys: ", err)
 			}
@@ -323,10 +358,11 @@ func main() {
 			log.Println("✅ Successfully connected to PostgreSQL database!")
 		}
 	}
+	usingSQLite = useSQLite == "true"
 
 	// Migración de tabla medicines
 	if useSQLite == "true" {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS medicines (
+		_, err = execDB(`CREATE TABLE IF NOT EXISTS medicines (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER,
 			name TEXT,
@@ -334,7 +370,7 @@ func main() {
 			taken INTEGER DEFAULT 0
 		)`)
 		if err == nil {
-			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS medicine_logs (
+			_, err = execDB(`CREATE TABLE IF NOT EXISTS medicine_logs (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				user_id INTEGER NOT NULL,
 				medicine_id INTEGER NOT NULL,
@@ -344,7 +380,7 @@ func main() {
 			)`)
 		}
 	} else {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS medicines (
+		_, err = execDB(`CREATE TABLE IF NOT EXISTS medicines (
 			id SERIAL PRIMARY KEY,
 			user_id INTEGER,
 			name TEXT,
@@ -352,7 +388,7 @@ func main() {
 			taken BOOLEAN DEFAULT FALSE
 		)`)
 		if err == nil {
-			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS medicine_logs (
+			_, err = execDB(`CREATE TABLE IF NOT EXISTS medicine_logs (
 				id SERIAL PRIMARY KEY,
 				user_id INTEGER NOT NULL,
 				medicine_id INTEGER NOT NULL,
@@ -464,7 +500,7 @@ func main() {
 			auth.GET("/medicines", func(c *gin.Context) {
 				userID := getUserIDFromContext(c)
 				today := time.Now().Format("2006-01-02")
-				rows, err := db.Query(`
+				rows, err := queryDB(`
 					SELECT m.id, m.user_id, m.name, m.time, d.taken_at
 					FROM medicines m
 					LEFT JOIN (
@@ -495,7 +531,7 @@ func main() {
 
 			auth.GET("/medicines/history", func(c *gin.Context) {
 				userID := getUserIDFromContext(c)
-				rows, err := db.Query(`
+				rows, err := queryDB(`
 					SELECT l.id, l.medicine_id, m.name, l.taken_date, l.taken_at
 					FROM medicine_logs l
 					JOIN medicines m ON m.id = l.medicine_id
@@ -527,7 +563,7 @@ func main() {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
 					return
 				}
-				_, err := db.Exec("INSERT INTO medicines (user_id, name, time, taken) VALUES (?, ?, ?, 0)", userID, req.Name, req.Time)
+				_, err := execDB("INSERT INTO medicines (user_id, name, time, taken) VALUES (?, ?, ?, 0)", userID, req.Name, req.Time)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo agregar medicina"})
 					return
@@ -544,7 +580,7 @@ func main() {
 					return
 				}
 
-				_, err := db.Exec("UPDATE medicines SET name = ?, time = ? WHERE id = ? AND user_id = ?", req.Name, req.Time, id, userID)
+				_, err := execDB("UPDATE medicines SET name = ?, time = ? WHERE id = ? AND user_id = ?", req.Name, req.Time, id, userID)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo actualizar medicina"})
 					return
@@ -554,14 +590,14 @@ func main() {
 				now := time.Now().Format(time.RFC3339)
 
 				if req.Taken {
-					_, _ = db.Exec("DELETE FROM medicine_logs WHERE user_id = ? AND medicine_id = ? AND taken_date = ?", userID, id, today)
-					_, err = db.Exec("INSERT INTO medicine_logs (user_id, medicine_id, taken_date, taken_at) VALUES (?, ?, ?, ?)", userID, id, today, now)
+					_, _ = execDB("DELETE FROM medicine_logs WHERE user_id = ? AND medicine_id = ? AND taken_date = ?", userID, id, today)
+					_, err = execDB("INSERT INTO medicine_logs (user_id, medicine_id, taken_date, taken_at) VALUES (?, ?, ?, ?)", userID, id, today, now)
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo registrar la toma de hoy"})
 						return
 					}
 				} else {
-					_, _ = db.Exec("DELETE FROM medicine_logs WHERE user_id = ? AND medicine_id = ? AND taken_date = ?", userID, id, today)
+					_, _ = execDB("DELETE FROM medicine_logs WHERE user_id = ? AND medicine_id = ? AND taken_date = ?", userID, id, today)
 				}
 
 				c.JSON(http.StatusOK, gin.H{"message": "Medicina actualizada"})
@@ -570,7 +606,7 @@ func main() {
 			auth.DELETE("/medicines/:id", func(c *gin.Context) {
 				userID := getUserIDFromContext(c)
 				id := c.Param("id")
-				_, err := db.Exec("DELETE FROM medicines WHERE id = ? AND user_id = ?", id, userID)
+				_, err := execDB("DELETE FROM medicines WHERE id = ? AND user_id = ?", id, userID)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo eliminar medicina"})
 					return
@@ -968,28 +1004,28 @@ func migrate(useSQLite bool) error {
 		}
 	}
 	for _, q := range queries {
-		if _, err := db.Exec(q); err != nil {
+		if _, err := execDB(q); err != nil {
 			return err
 		}
 	}
 
 	// Add snacks column to existing meal_plans table (migration)
-	db.Exec(`ALTER TABLE meal_plans ADD COLUMN snacks TEXT;`)
+	execDB(`ALTER TABLE meal_plans ADD COLUMN snacks TEXT;`)
 
 	// Add nutritionist_id column to users table if it doesn't exist
-	db.Exec(`ALTER TABLE users ADD COLUMN nutritionist_id INTEGER;`)
-	db.Exec(`ALTER TABLE users ADD COLUMN phone TEXT;`)
-	db.Exec(`ALTER TABLE users ADD COLUMN contact_preference TEXT;`)
+	execDB(`ALTER TABLE users ADD COLUMN nutritionist_id INTEGER;`)
+	execDB(`ALTER TABLE users ADD COLUMN phone TEXT;`)
+	execDB(`ALTER TABLE users ADD COLUMN contact_preference TEXT;`)
 
 	// Add nutritionist_id column to appointments table if it doesn't exist
-	db.Exec(`ALTER TABLE appointments ADD COLUMN nutritionist_id INTEGER;`)
+	execDB(`ALTER TABLE appointments ADD COLUMN nutritionist_id INTEGER;`)
 
 	// Add reminder_settings column to existing user_settings table (migration)
-	db.Exec(`ALTER TABLE user_settings ADD COLUMN reminder_settings TEXT;`)
+	execDB(`ALTER TABLE user_settings ADD COLUMN reminder_settings TEXT;`)
 
 	var socialErr error
 	if useSQLite {
-		_, socialErr = db.Exec(`CREATE TABLE IF NOT EXISTS social_accounts (
+		_, socialErr = execDB(`CREATE TABLE IF NOT EXISTS social_accounts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER NOT NULL,
 			provider TEXT NOT NULL,
@@ -1003,7 +1039,7 @@ func migrate(useSQLite bool) error {
 			UNIQUE(provider, provider_user_id)
 		)`)
 	} else {
-		_, socialErr = db.Exec(`CREATE TABLE IF NOT EXISTS social_accounts (
+		_, socialErr = execDB(`CREATE TABLE IF NOT EXISTS social_accounts (
 			id SERIAL PRIMARY KEY,
 			user_id INTEGER NOT NULL,
 			provider TEXT NOT NULL,
@@ -1023,7 +1059,7 @@ func migrate(useSQLite bool) error {
 
 	var auditErr error
 	if useSQLite {
-		_, auditErr = db.Exec(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
+		_, auditErr = execDB(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			admin_user_id INTEGER NOT NULL,
 			action TEXT NOT NULL,
@@ -1032,7 +1068,7 @@ func migrate(useSQLite bool) error {
 			FOREIGN KEY(admin_user_id) REFERENCES users(id)
 		)`)
 	} else {
-		_, auditErr = db.Exec(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
+		_, auditErr = execDB(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
 			id SERIAL PRIMARY KEY,
 			admin_user_id INTEGER NOT NULL,
 			action TEXT NOT NULL,
@@ -1063,7 +1099,7 @@ func registerHandler(c *gin.Context) {
 	}
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	res, err := db.Exec(`INSERT INTO users (name,email,password,role) VALUES (?,?,?,?)`, req.Name, req.Email, string(hash), "user")
+	res, err := execDB(`INSERT INTO users (name,email,password,role) VALUES (?,?,?,?)`, req.Name, req.Email, string(hash), "user")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no se pudo crear el usuario (email puede estar en uso)"})
 		return
@@ -1085,7 +1121,7 @@ func loginHandler(c *gin.Context) {
 	log.Printf("[Login] Attempting login for: %s", req.Email)
 
 	var u User
-	row := db.QueryRow(`SELECT id,name,email,password,role FROM users WHERE email = ?`, req.Email)
+	row := queryRowDB(`SELECT id,name,email,password,role FROM users WHERE email = ?`, req.Email)
 	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role); err != nil {
 		log.Printf("[Login] User not found or scan error: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "credenciales inválidas"})
@@ -1128,7 +1164,7 @@ func meHandler(c *gin.Context) {
 	var enableReminders bool
 	var mealTimes map[string]string
 
-	if err := db.QueryRow(`
+	if err := queryRowDB(`
 		SELECT meal_times, enable_reminders
 		FROM user_settings
 		WHERE user_id = ?
@@ -1150,7 +1186,7 @@ func meHandler(c *gin.Context) {
 	var nutritionistEmail sql.NullString
 	var phone sql.NullString
 	var contactPreference sql.NullString
-	err := db.QueryRow(`
+	err := queryRowDB(`
 		SELECT u.nutritionist_id, n.name, n.email, u.phone, u.contact_preference
 		FROM users u
 		LEFT JOIN users n ON u.nutritionist_id = n.id
@@ -1230,14 +1266,14 @@ func updateContactPhoneHandler(c *gin.Context) {
 	}
 	query += ` WHERE id = ?`
 	args = append(args, claims.UserID)
-	if _, err := db.Exec(query, args...); err != nil {
+	if _, err := execDB(query, args...); err != nil {
 		log.Printf("[Contact] Error updating phone for user %d: %v", claims.UserID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo guardar el teléfono"})
 		return
 	}
 
 	var savedName string
-	if err := db.QueryRow(`SELECT name FROM users WHERE id = ?`, claims.UserID).Scan(&savedName); err != nil {
+	if err := queryRowDB(`SELECT name FROM users WHERE id = ?`, claims.UserID).Scan(&savedName); err != nil {
 		log.Printf("[Contact] Error reading updated name for user %d: %v", claims.UserID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudieron leer los datos actualizados"})
 		return
@@ -1268,7 +1304,7 @@ func createHistoryHandler(c *gin.Context) {
 	}
 	log.Printf("[History] Saving data for user %d: date=%s, weight=%.2f, fat=%.2f, muscle=%.2f",
 		claims.UserID, req.Date, req.Weight, req.FatPercentage, req.MusclePercentage)
-	_, err := db.Exec(`INSERT INTO histories (user_id,date,weight,fat_percentage,muscle_percentage) VALUES (?,?,?,?,?)`,
+	_, err := execDB(`INSERT INTO histories (user_id,date,weight,fat_percentage,muscle_percentage) VALUES (?,?,?,?,?)`,
 		claims.UserID, req.Date, req.Weight, req.FatPercentage, req.MusclePercentage)
 	if err != nil {
 		log.Printf("[History] Database error: %v", err)
@@ -1281,7 +1317,7 @@ func createHistoryHandler(c *gin.Context) {
 
 func listHistoryHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
-	rows, err := db.Query(`SELECT id,user_id,date,weight,fat_percentage,muscle_percentage FROM histories WHERE user_id = ? ORDER BY date DESC`, claims.UserID)
+	rows, err := queryDB(`SELECT id,user_id,date,weight,fat_percentage,muscle_percentage FROM histories WHERE user_id = ? ORDER BY date DESC`, claims.UserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error al leer historiales"})
 		return
@@ -1336,7 +1372,7 @@ func createHealthProfileHandler(c *gin.Context) {
 
 	log.Printf("[HealthProfile] Creating profile for user %d", claims.UserID)
 
-	_, err := db.Exec(`
+	_, err := execDB(`
 		INSERT INTO health_profiles (
 			user_id, age, sex, height, current_weight, goal_weight, waist_circumference,
 			medical_conditions, medications, allergies, glucose_fasting, hba1c,
@@ -1369,7 +1405,7 @@ func getHealthProfileHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 	var profile HealthProfile
 
-	err := db.QueryRow(`
+	err := queryRowDB(`
 		SELECT id, user_id, age, sex, height, current_weight, goal_weight, waist_circumference,
 		medical_conditions, medications, allergies, glucose_fasting, hba1c,
 		cholesterol_total, cholesterol_ldl, cholesterol_hdl, triglycerides,
@@ -1410,7 +1446,7 @@ func updateHealthProfileHandler(c *gin.Context) {
 
 	log.Printf("[HealthProfile] Updating profile for user %d", claims.UserID)
 
-	res, err := db.Exec(`
+	res, err := execDB(`
 		UPDATE health_profiles SET
 			age = ?, sex = ?, height = ?, current_weight = ?, goal_weight = ?,
 			waist_circumference = ?, medical_conditions = ?, medications = ?,
@@ -1850,7 +1886,7 @@ func isPrivacyAdmin(c *gin.Context) bool {
 
 func auditAdminAction(c *gin.Context, action string, targetUserID interface{}) {
 	claims := c.MustGet("claims").(*Claims)
-	_, err := db.Exec(
+	_, err := execDB(
 		`INSERT INTO admin_audit_logs (admin_user_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)`,
 		claims.UserID,
 		action,
@@ -1917,7 +1953,7 @@ func adminMetricsHandler(c *gin.Context) {
 
 	for key, query := range queries {
 		var value int
-		if err := db.QueryRow(query).Scan(&value); err != nil {
+		if err := queryRowDB(query).Scan(&value); err != nil {
 			log.Printf("[ADMIN] metric %s unavailable: %v", key, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudieron calcular las métricas"})
 			return
@@ -1945,7 +1981,7 @@ func nutritionistOrAdminMiddleware() gin.HandlerFunc {
 }
 
 func listUsersHandler(c *gin.Context) {
-	rows, err := db.Query(`SELECT id, name, email, role, phone FROM users`)
+	rows, err := queryDB(`SELECT id, name, email, role, phone FROM users`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch users"})
 		return
@@ -1988,7 +2024,7 @@ func userHistoryHandler(c *gin.Context) {
 		return
 	}
 	userID := c.Param("id")
-	rows, err := db.Query(`SELECT id, user_id, date, weight, fat_percentage, muscle_percentage FROM histories WHERE user_id = ? ORDER BY date DESC`, userID)
+	rows, err := queryDB(`SELECT id, user_id, date, weight, fat_percentage, muscle_percentage FROM histories WHERE user_id = ? ORDER BY date DESC`, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch history"})
 		return
@@ -2034,7 +2070,7 @@ func exportDataHandler(c *gin.Context) {
 		LEFT JOIN histories h ON u.id = h.user_id
 		ORDER BY u.id, h.date DESC
 	`
-	rows, err := db.Query(query)
+	rows, err := queryDB(query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "export failed"})
 		return
@@ -2110,7 +2146,7 @@ func updateUserRoleHandler(c *gin.Context) {
 		return
 	}
 
-	result, err := db.Exec(`UPDATE users SET role = ? WHERE id = ?`, req.Role, userID)
+	result, err := execDB(`UPDATE users SET role = ? WHERE id = ?`, req.Role, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update role"})
 		return
@@ -2137,13 +2173,13 @@ func deleteUserHandler(c *gin.Context) {
 	}
 
 	// Start transaction-like behavior: delete related records first
-	_, err := db.Exec(`DELETE FROM histories WHERE user_id = ?`, userID)
+	_, err := execDB(`DELETE FROM histories WHERE user_id = ?`, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user history"})
 		return
 	}
 
-	result, err := db.Exec(`DELETE FROM users WHERE id = ?`, userID)
+	result, err := execDB(`DELETE FROM users WHERE id = ?`, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user"})
 		return
@@ -2189,7 +2225,7 @@ func uploadMealPlanHandler(c *gin.Context) {
 	log.Printf("[MealPlan] Extracted %d meals from PDF", len(meals))
 
 	planName := fmt.Sprintf("Plan %s", time.Now().Format("2006-01-02"))
-	result, err := db.Exec(`INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at) VALUES (?, ?, ?, ?, ?)`,
+	result, err := execDB(`INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at) VALUES (?, ?, ?, ?, ?)`,
 		claims.UserID, planName, time.Now().Format("2006-01-02"), snacksText, time.Now().Format(time.RFC3339))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
@@ -2199,7 +2235,7 @@ func uploadMealPlanHandler(c *gin.Context) {
 	planID, _ := result.LastInsertId()
 
 	for _, meal := range meals {
-		_, err = db.Exec(`INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation) VALUES (?, ?, ?, ?, ?, ?)`,
+		_, err = execDB(`INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation) VALUES (?, ?, ?, ?, ?, ?)`,
 			planID, meal.DayOfWeek, meal.MealType, meal.Name, meal.Ingredients, meal.Preparation)
 		if err != nil {
 			log.Printf("[MealPlan] Failed to insert meal: %v", err)
@@ -2213,7 +2249,7 @@ func getMealPlanHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 
 	var plan MealPlan
-	err := db.QueryRow(`SELECT id, user_id, name, start_date, snacks, created_at FROM meal_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, claims.UserID).
+	err := queryRowDB(`SELECT id, user_id, name, start_date, snacks, created_at FROM meal_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, claims.UserID).
 		Scan(&plan.ID, &plan.UserID, &plan.Name, &plan.StartDate, &plan.Snacks, &plan.CreatedAt)
 	if err != nil {
 		// If the user has no plan yet, return empty data instead of 404 to keep the UI clean
@@ -2225,7 +2261,7 @@ func getMealPlanHandler(c *gin.Context) {
 		return
 	}
 
-	rows, err := db.Query(`SELECT id, plan_id, day_of_week, meal_type, name, ingredients, preparation FROM plan_meals WHERE plan_id = ? ORDER BY 
+	rows, err := queryDB(`SELECT id, plan_id, day_of_week, meal_type, name, ingredients, preparation FROM plan_meals WHERE plan_id = ? ORDER BY
 		CASE day_of_week 
 			WHEN 'Lunes' THEN 1 WHEN 'Martes' THEN 2 WHEN 'Miércoles' THEN 3 WHEN 'Jueves' THEN 4 
 			WHEN 'Viernes' THEN 5 WHEN 'Sábado' THEN 6 WHEN 'Domingo' THEN 7 
@@ -2262,7 +2298,7 @@ func createFoodLogHandler(c *gin.Context) {
 		return
 	}
 
-	_, err := db.Exec(`INSERT OR REPLACE INTO food_logs (user_id, date, meal_type, completed, notes) VALUES (?, ?, ?, ?, ?)`,
+	_, err := execDB(`INSERT OR REPLACE INTO food_logs (user_id, date, meal_type, completed, notes) VALUES (?, ?, ?, ?, ?)`,
 		claims.UserID, req.Date, req.MealType, req.Completed, req.Notes)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save log"})
@@ -2279,7 +2315,7 @@ func getFoodLogHandler(c *gin.Context) {
 		date = time.Now().Format("2006-01-02")
 	}
 
-	rows, err := db.Query(`SELECT id, user_id, date, meal_type, completed, notes FROM food_logs WHERE user_id = ? AND date = ?`, claims.UserID, date)
+	rows, err := queryDB(`SELECT id, user_id, date, meal_type, completed, notes FROM food_logs WHERE user_id = ? AND date = ?`, claims.UserID, date)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch logs"})
 		return
@@ -2826,7 +2862,7 @@ func updateSettingsHandler(c *gin.Context) {
 		reminderSettingsJSON = string(b)
 	}
 
-	_, err = db.Exec(`
+	_, err = execDB(`
 		INSERT INTO user_settings (user_id, meal_times, reminder_settings, enable_reminders)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
@@ -2851,7 +2887,7 @@ func getSettingsHandler(c *gin.Context) {
 	var reminderSettingsJSON sql.NullString
 	var enableReminders bool
 
-	err := db.QueryRow(`
+	err := queryRowDB(`
 		SELECT meal_times, reminder_settings, enable_reminders
 		FROM user_settings
 		WHERE user_id = ?
@@ -2927,7 +2963,7 @@ func createAppointmentHandler(c *gin.Context) {
 
 	// Use user's assigned nutritionist for the appointment
 	var nutritionistID sql.NullInt64
-	if err := db.QueryRow(`SELECT nutritionist_id FROM users WHERE id = ?`, claims.UserID).Scan(&nutritionistID); err != nil {
+	if err := queryRowDB(`SELECT nutritionist_id FROM users WHERE id = ?`, claims.UserID).Scan(&nutritionistID); err != nil {
 		log.Printf("[Appointments] Error fetching assigned nutritionist: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch assigned nutritionist"})
 		return
@@ -2937,7 +2973,7 @@ func createAppointmentHandler(c *gin.Context) {
 		return
 	}
 
-	result, err := db.Exec(`
+	result, err := execDB(`
 		INSERT INTO appointments (user_id, nutritionist_id, title, description, appointment_date, appointment_time, status, notes, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
 	`, claims.UserID, nutritionistID.Int64, req.Title, req.Description, req.AppointmentDate, req.AppointmentTime, req.Notes, createdAt)
@@ -2951,7 +2987,7 @@ func createAppointmentHandler(c *gin.Context) {
 	id, _ := result.LastInsertId()
 
 	// Crear notificación para el usuario sobre su nueva cita
-	_, err = db.Exec(`
+	_, err = execDB(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, is_read, created_at)
 		VALUES (?, 'appointment', 'Nueva Cita Programada', ?, ?, 0, ?)
 	`, claims.UserID, fmt.Sprintf("Tienes una cita programada: %s el %s a las %s", req.Title, req.AppointmentDate, req.AppointmentTime), id, createdAt)
@@ -2992,7 +3028,7 @@ func getAppointmentsHandler(c *gin.Context) {
 
 	query += " ORDER BY appointment_date DESC, appointment_time DESC"
 
-	rows, err := db.Query(query, args...)
+	rows, err := queryDB(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch appointments"})
 		return
@@ -3043,7 +3079,7 @@ func updateAppointmentHandler(c *gin.Context) {
 		return
 	}
 
-	_, err := db.Exec(`
+	_, err := execDB(`
 		UPDATE appointments
 		SET title = ?, description = ?, appointment_date = ?, appointment_time = ?, status = ?, notes = ?
 		WHERE id = ? AND user_id = ?
@@ -3063,7 +3099,7 @@ func deleteAppointmentHandler(c *gin.Context) {
 	appointmentID := c.Param("id")
 
 	// Soft delete: mark as archived
-	_, err := db.Exec(`UPDATE appointments SET is_archived = 1 WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
+	_, err := execDB(`UPDATE appointments SET is_archived = 1 WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
 
 	if err != nil {
 		log.Printf("[Appointments] Error archiving: %v", err)
@@ -3078,7 +3114,7 @@ func archiveAppointmentHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 	appointmentID := c.Param("id")
 
-	_, err := db.Exec(`UPDATE appointments SET is_archived = 1 WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
+	_, err := execDB(`UPDATE appointments SET is_archived = 1 WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
 	if err != nil {
 		log.Printf("[Appointments] Error archiving: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to archive"})
@@ -3092,7 +3128,7 @@ func restoreAppointmentHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 	appointmentID := c.Param("id")
 
-	_, err := db.Exec(`UPDATE appointments SET is_archived = 0 WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
+	_, err := execDB(`UPDATE appointments SET is_archived = 0 WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
 	if err != nil {
 		log.Printf("[Appointments] Error restoring: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to restore"})
@@ -3123,7 +3159,7 @@ func getRecipesHandler(c *gin.Context) {
 
 	query += " ORDER BY name ASC"
 
-	rows, err := db.Query(query, args...)
+	rows, err := queryDB(query, args...)
 	if err != nil {
 		log.Printf("[Recipes] Error querying: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get recipes"})
@@ -3169,7 +3205,7 @@ func getRecipeHandler(c *gin.Context) {
 	var name, category, ingredients, instructions, imageURL, createdAt string
 	var protein, carbs, fat float64
 
-	err := db.QueryRow(`
+	err := queryRowDB(`
 		SELECT id, name, category, prep_time, servings, calories, protein, carbs, fat, ingredients, instructions, image_url, created_at 
 		FROM recipes WHERE id = ?
 	`, recipeID).Scan(&id, &name, &category, &prepTime, &servings, &calories, &protein, &carbs, &fat, &ingredients, &instructions, &imageURL, &createdAt)
@@ -3234,7 +3270,7 @@ func seedDefaultUsers() error {
 
 func ensureUserExists(email, name, password, role string) error {
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE email = ?`, email).Scan(&count); err != nil {
+	if err := queryRowDB(`SELECT COUNT(*) FROM users WHERE email = ?`, email).Scan(&count); err != nil {
 		return err
 	}
 
@@ -3247,7 +3283,7 @@ func ensureUserExists(email, name, password, role string) error {
 		return err
 	}
 
-	if _, err := db.Exec(`INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)`, name, email, string(hash), role); err != nil {
+	if _, err := execDB(`INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)`, name, email, string(hash), role); err != nil {
 		return err
 	}
 
@@ -3258,7 +3294,7 @@ func ensureUserExists(email, name, password, role string) error {
 func seedRecipes() error {
 	// Check if recipes already exist
 	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM recipes").Scan(&count)
+	err := queryRowDB("SELECT COUNT(*) FROM recipes").Scan(&count)
 	if err != nil {
 		return err
 	}
@@ -3388,9 +3424,9 @@ func seedRecipes() error {
 	}
 
 	for _, r := range recipes {
-		_, err := db.Exec(`
+		_, err := execDB(`
 			INSERT INTO recipes (name, category, prep_time, servings, calories, protein, carbs, fat, ingredients, instructions, image_url, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		`, r.name, r.category, r.prepTime, r.servings, r.calories, r.protein, r.carbs, r.fat, r.ingredients, r.instructions, r.imageURL)
 
 		if err != nil {
@@ -3422,9 +3458,9 @@ func sendMessageHandler(c *gin.Context) {
 		return
 	}
 
-	result, err := db.Exec(`
+	result, err := execDB(`
 		INSERT INTO messages (sender_id, recipient_id, content, is_read, created_at)
-		VALUES (?, ?, ?, 0, datetime('now'))
+		VALUES (?, ?, ?, FALSE, CURRENT_TIMESTAMP)
 	`, claims.UserID, input.RecipientID, input.Content)
 
 	if err != nil {
@@ -3437,12 +3473,12 @@ func sendMessageHandler(c *gin.Context) {
 
 	// Get sender name for notification
 	var senderName string
-	db.QueryRow(`SELECT name FROM users WHERE id = ?`, claims.UserID).Scan(&senderName)
+	queryRowDB(`SELECT name FROM users WHERE id = ?`, claims.UserID).Scan(&senderName)
 
 	// Create notification for recipient
 	notifTitle := "Nuevo mensaje"
 	notifMsg := fmt.Sprintf("De: %s", senderName)
-	_, err = db.Exec(`
+	_, err = execDB(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, is_read, created_at)
 		VALUES (?, 'message', ?, ?, ?, 0, ?)
 	`, input.RecipientID, notifTitle, notifMsg, messageID)
@@ -3473,7 +3509,7 @@ func getMessagesHandler(c *gin.Context) {
 		return
 	}
 
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT m.id, m.sender_id, m.recipient_id, m.content, m.is_read, m.created_at, 
 		       u1.name as sender_name, u2.name as recipient_name
 		FROM messages m
@@ -3526,7 +3562,7 @@ func getConversationsHandler(c *gin.Context) {
 	log.Printf("[Messages] Getting conversations for user_id=%d", claims.UserID)
 
 	// Get unique conversation partners with their latest message info
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT DISTINCT
 			CASE WHEN m.sender_id = ? THEN m.recipient_id ELSE m.sender_id END as user_id,
 			u.name as user_name,
@@ -3566,7 +3602,7 @@ func getConversationsHandler(c *gin.Context) {
 		// Get last message details for this conversation
 		var lastMessage sql.NullString
 		var lastMessageTime sql.NullString
-		db.QueryRow(`
+		queryRowDB(`
 			SELECT m.content, m.created_at
 			FROM messages m
 			LEFT JOIN deleted_messages d ON d.message_id = m.id AND d.user_id = ?
@@ -3580,7 +3616,7 @@ func getConversationsHandler(c *gin.Context) {
 
 		// Count unread messages from this user
 		var unreadCount int
-		db.QueryRow(`
+		queryRowDB(`
 			SELECT COUNT(*)
 			FROM messages m
 			LEFT JOIN deleted_messages d ON d.message_id = m.id AND d.user_id = ?
@@ -3611,7 +3647,7 @@ func markMessageAsReadHandler(c *gin.Context) {
 	messageID := c.Param("id")
 
 	// Only mark as read if current user is the recipient
-	_, err := db.Exec(`
+	_, err := execDB(`
 		UPDATE messages 
 		SET is_read = 1 
 		WHERE id = ? AND recipient_id = ?
@@ -3632,9 +3668,9 @@ func deleteMessageHandler(c *gin.Context) {
 	messageID := c.Param("id")
 
 	// Soft delete per user: mark hidden for this user
-	_, err := db.Exec(`
+	_, err := execDB(`
 		INSERT OR IGNORE INTO deleted_messages (user_id, message_id, created_at)
-		VALUES (?, ?, datetime('now'))
+		VALUES (?, ?, CURRENT_TIMESTAMP)
 	`, claims.UserID, messageID)
 
 	if err != nil {
@@ -3656,7 +3692,7 @@ func getArchivedMessagesHandler(c *gin.Context) {
 		return
 	}
 
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT m.id, m.sender_id, m.recipient_id, m.content, m.is_read, m.created_at,
 		       u1.name as sender_name, u2.name as recipient_name
 		FROM messages m
@@ -3704,7 +3740,7 @@ func getArchivedMessagesHandler(c *gin.Context) {
 func getNotificationsHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT id, type, title, message, related_id, is_read, created_at
 		FROM notifications
 		WHERE user_id = ?
@@ -3755,7 +3791,7 @@ func markNotificationAsReadHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 	notificationID := c.Param("id")
 
-	result, err := db.Exec(`
+	result, err := execDB(`
 		UPDATE notifications 
 		SET is_read = 1 
 		WHERE id = ? AND user_id = ?
@@ -3781,7 +3817,7 @@ func markNotificationAsReadHandler(c *gin.Context) {
 func markAllNotificationsAsReadHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 
-	_, err := db.Exec(`
+	_, err := execDB(`
 		UPDATE notifications 
 		SET is_read = 1 
 		WHERE user_id = ?
@@ -3810,10 +3846,10 @@ func registerPushTokenHandler(c *gin.Context) {
 	}
 
 	// Delete old token for this user if exists (one token per user for now)
-	db.Exec(`DELETE FROM push_tokens WHERE user_id = ?`, claims.UserID)
+	execDB(`DELETE FROM push_tokens WHERE user_id = ?`, claims.UserID)
 
 	// Insert new token
-	_, err := db.Exec(`
+	_, err := execDB(`
 		INSERT INTO push_tokens (user_id, token, device_type, created_at)
 		VALUES (?, ?, ?, ?)
 	`, claims.UserID, req.Token, req.DeviceType, time.Now().Format("2006-01-02 15:04:05"))
@@ -3832,7 +3868,7 @@ func registerPushTokenHandler(c *gin.Context) {
 func deletePushTokenHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 
-	_, err := db.Exec(`DELETE FROM push_tokens WHERE user_id = ?`, claims.UserID)
+	_, err := execDB(`DELETE FROM push_tokens WHERE user_id = ?`, claims.UserID)
 	if err != nil {
 		log.Printf("[PushToken] Error deleting token: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete push token"})
@@ -3847,7 +3883,7 @@ func deletePushTokenHandler(c *gin.Context) {
 func sendPushNotification(userID int, title, body string, data map[string]interface{}) error {
 	// Get push token for user
 	var token string
-	err := db.QueryRow(`SELECT token FROM push_tokens WHERE user_id = ? LIMIT 1`, userID).Scan(&token)
+	err := queryRowDB(`SELECT token FROM push_tokens WHERE user_id = ? LIMIT 1`, userID).Scan(&token)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("[PushNotification] No token found for user %d", userID)
@@ -3904,7 +3940,7 @@ func sendPushNotification(userID int, title, body string, data map[string]interf
 func getAppointmentChangesHandler(c *gin.Context) {
 	appointmentID := c.Param("appointment_id")
 
-	rows, err := db.Query(`
+	rows, err := queryDB(`
 		SELECT ac.id, ac.new_date, ac.new_time, ac.reason, ac.status, ac.created_at, ac.responded_at,
 			u.name as proposed_by_name
 		FROM appointment_changes ac
@@ -3966,7 +4002,7 @@ func acceptAppointmentChangeHandler(c *gin.Context) {
 	// Get change details
 	var appointmentID int
 	var newDate, newTime string
-	err := db.QueryRow(`
+	err := queryRowDB(`
 		SELECT appointment_id, new_date, new_time 
 		FROM appointment_changes 
 		WHERE id = ?
@@ -3979,14 +4015,14 @@ func acceptAppointmentChangeHandler(c *gin.Context) {
 
 	// Verify user owns the appointment
 	var userID int
-	db.QueryRow(`SELECT user_id FROM appointments WHERE id = ?`, appointmentID).Scan(&userID)
+	queryRowDB(`SELECT user_id FROM appointments WHERE id = ?`, appointmentID).Scan(&userID)
 	if userID != claims.UserID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
 		return
 	}
 
 	// Update appointment
-	_, err = db.Exec(`
+	_, err = execDB(`
 		UPDATE appointments 
 		SET appointment_date = ?, appointment_time = ?
 		WHERE id = ?
@@ -3998,7 +4034,7 @@ func acceptAppointmentChangeHandler(c *gin.Context) {
 	}
 
 	// Update change status
-	db.Exec(`
+	execDB(`
 		UPDATE appointment_changes 
 		SET status = 'accepted', responded_at = ?
 		WHERE id = ?
@@ -4006,11 +4042,11 @@ func acceptAppointmentChangeHandler(c *gin.Context) {
 
 	// Notify nutritionist
 	var nutritionistID int
-	db.QueryRow(`
+	queryRowDB(`
 		SELECT proposed_by FROM appointment_changes WHERE id = ?
 	`, changeID).Scan(&nutritionistID)
 
-	db.Exec(`
+	execDB(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, created_at)
 		VALUES (?, 'appointment_accepted', 'Cambio Aceptado', ?, ?, ?)
 	`, nutritionistID, "El paciente ha aceptado el cambio de cita.", appointmentID, time.Now().Format("2006-01-02 15:04:05"))
@@ -4030,7 +4066,7 @@ func rejectAppointmentChangeHandler(c *gin.Context) {
 
 	// Get change details
 	var appointmentID, proposedBy int
-	err := db.QueryRow(`
+	err := queryRowDB(`
 		SELECT appointment_id, proposed_by 
 		FROM appointment_changes 
 		WHERE id = ?
@@ -4043,14 +4079,14 @@ func rejectAppointmentChangeHandler(c *gin.Context) {
 
 	// Verify user owns the appointment
 	var userID int
-	db.QueryRow(`SELECT user_id FROM appointments WHERE id = ?`, appointmentID).Scan(&userID)
+	queryRowDB(`SELECT user_id FROM appointments WHERE id = ?`, appointmentID).Scan(&userID)
 	if userID != claims.UserID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "not authorized"})
 		return
 	}
 
 	// Update change status
-	db.Exec(`
+	execDB(`
 		UPDATE appointment_changes 
 		SET status = 'rejected', responded_at = ?
 		WHERE id = ?
@@ -4062,7 +4098,7 @@ func rejectAppointmentChangeHandler(c *gin.Context) {
 		message += " Razón: " + req.Reason
 	}
 
-	db.Exec(`
+	execDB(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, created_at)
 		VALUES (?, 'appointment_rejected', 'Cambio Rechazado', ?, ?, ?)
 	`, proposedBy, message, appointmentID, time.Now().Format("2006-01-02 15:04:05"))
@@ -4072,7 +4108,7 @@ func rejectAppointmentChangeHandler(c *gin.Context) {
 
 // --- Nutritionist Handlers (stubs) ---
 func listNutritionistsHandler(c *gin.Context) {
-	rows, err := db.Query(`SELECT id, name, email FROM users WHERE role = 'nutritionist' ORDER BY id DESC`)
+	rows, err := queryDB(`SELECT id, name, email FROM users WHERE role = 'nutritionist' ORDER BY id DESC`)
 	if err != nil {
 		log.Printf("[Nutritionist] Error listing nutritionists: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list nutritionists"})
@@ -4118,7 +4154,7 @@ func assignNutritionistHandler(c *gin.Context) {
 
 	// Validate that the nutritionist exists and has the right role
 	var nutritionistCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ? AND role = 'nutritionist'`, req.NutritionistID).Scan(&nutritionistCount); err != nil {
+	if err := queryRowDB(`SELECT COUNT(*) FROM users WHERE id = ? AND role = 'nutritionist'`, req.NutritionistID).Scan(&nutritionistCount); err != nil {
 		log.Printf("[Nutritionist] Error validating nutritionist: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate nutritionist"})
 		return
@@ -4129,7 +4165,7 @@ func assignNutritionistHandler(c *gin.Context) {
 	}
 
 	// Assign (or re-assign) nutritionist
-	_, err := db.Exec(`UPDATE users SET nutritionist_id = ? WHERE id = ?`, req.NutritionistID, claims.UserID)
+	_, err := execDB(`UPDATE users SET nutritionist_id = ? WHERE id = ?`, req.NutritionistID, claims.UserID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error assigning nutritionist: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to assign nutritionist"})
