@@ -1,5 +1,16 @@
 import React, { useState } from 'react';
-import { Alert, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import api from './api';
 
 export default function ContactRequiredScreen({ profile, onSaved }) {
@@ -46,7 +57,16 @@ export default function ContactRequiredScreen({ profile, onSaved }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.card}>
+      <KeyboardAvoidingView
+        style={styles.keyboardContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.card}>
         <Text style={styles.icon}>📞</Text>
         <Text style={styles.title}>Completa tus datos de contacto</Text>
         <Text style={styles.description}>
@@ -80,16 +100,20 @@ export default function ContactRequiredScreen({ profile, onSaved }) {
           maxLength={30}
           autoFocus={!phone}
         />
-        <TouchableOpacity style={styles.button} onPress={saveContact} disabled={saving}>
-          <Text style={styles.buttonText}>{saving ? 'Guardando...' : 'Continuar'}</Text>
-        </TouchableOpacity>
-      </View>
+            <TouchableOpacity style={styles.button} onPress={saveContact} disabled={saving}>
+              <Text style={styles.buttonText}>{saving ? 'Guardando...' : 'Continuar'}</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f7fa', justifyContent: 'center', padding: 20 },
+  container: { flex: 1, backgroundColor: '#f5f7fa' },
+  keyboardContainer: { flex: 1 },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 20, paddingBottom: 56 },
   card: { backgroundColor: '#fff', borderRadius: 14, padding: 22, elevation: 2 },
   icon: { fontSize: 40, textAlign: 'center', marginBottom: 10 },
   title: { fontSize: 23, fontWeight: '700', textAlign: 'center', color: '#1f2937' },
@@ -99,6 +123,6 @@ const styles = StyleSheet.create({
   option: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
   checkbox: { fontSize: 24, color: '#4f46e5', marginRight: 8 },
   optionText: { flex: 1, color: '#374151' },
-  button: { backgroundColor: '#4f46e5', borderRadius: 8, marginTop: 20, padding: 14 },
+  button: { backgroundColor: '#4f46e5', borderRadius: 8, marginBottom: 18, marginTop: 20, padding: 14 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '700', textAlign: 'center' },
 });
