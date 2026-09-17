@@ -22,6 +22,7 @@ export default function DashboardScreen({ onNavigate, profile }) {
     { id: 2, text: 'Ejercicio 30 minutos', completed: false },
     { id: 3, text: 'Registrar comidas', completed: false },
   ]);
+  const [appointments, setAppointments] = useState([]);
 
   console.log('[Dashboard] Component mounted, profile:', profile);
 
@@ -51,6 +52,12 @@ export default function DashboardScreen({ onNavigate, profile }) {
       console.log('[Dashboard] Setting mealPlan with', mealsData.length, 'meals');
       setMealPlan(mealsData);
       setFoodLog(foodRes.data || []);
+      try {
+        const appointmentRes = await api.get('/appointments');
+        setAppointments(Array.isArray(appointmentRes.data) ? appointmentRes.data.slice(0, 3) : []);
+      } catch (appointmentError) {
+        console.warn('[Dashboard] Could not load appointments:', appointmentError?.message);
+      }
     } catch (err) {
       console.error('[Dashboard] Error in loadTodayData:', err);
       console.error('[Dashboard] Error details:', err.message);
@@ -141,6 +148,66 @@ export default function DashboardScreen({ onNavigate, profile }) {
               day: 'numeric'
             })}
           </Text>
+        </View>
+
+        <View style={styles.nutritionistCard}>
+          <Text style={styles.nutritionistTitle}>👨‍⚕️ {profile?.nutritionist_name ? 'Tu nutriólogo' : '¿No tienes nutriólogo?'}</Text>
+          <Text style={styles.nutritionistText}>
+            {profile?.nutritionist_name
+              ? `${profile.nutritionist_name} puede acompañarte en tu seguimiento.`
+              : 'Asigna uno para que te acompañe en tu camino hacia el bienestar.'}
+          </Text>
+          {!profile?.nutritionist_id && (
+            <TouchableOpacity style={styles.primaryButton} onPress={() => onNavigate('nutritionist-selection')}>
+              <Text style={styles.primaryButtonText}>Elegir nutriólogo</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Resumen rápido</Text>
+          <View style={styles.summaryRow}>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Próxima comida</Text>
+              <Text style={styles.summaryValue}>{todayMeals ? 'Plan de hoy' : 'Sin plan'}</Text>
+              <Text style={styles.summaryHint}>{todayMeals ? 'Revisa tu plan de comidas' : 'Puedes solicitar un plan'}</Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Recordatorios</Text>
+              <Text style={styles.summaryValue}>{profile?.enable_reminders ? 'Activos' : 'Inactivos'}</Text>
+              <Text style={styles.summaryHint}>Notificaciones</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Atajos</Text>
+          <View style={styles.shortcuts}>
+            {[
+              ['Plan de comidas', 'mealplan'],
+              ['Progreso', 'progress'],
+              ['Mensajes', 'messages'],
+              ['Soporte', 'support'],
+            ].map(([label, target]) => (
+              <TouchableOpacity key={target} style={styles.shortcutButton} onPress={() => onNavigate(target)}>
+                <Text style={styles.shortcutText}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Próximas citas</Text>
+          {appointments.length === 0 ? (
+            <Text style={styles.emptyText}>Aún no tienes citas programadas.</Text>
+          ) : appointments.map(appointment => (
+            <Text key={appointment.id} style={styles.appointmentText}>
+              {appointment.appointment_date} · {appointment.appointment_time} · {appointment.title}
+            </Text>
+          ))}
+          <TouchableOpacity style={styles.outlineButton} onPress={() => onNavigate('appointments')}>
+            <Text style={styles.outlineButtonText}>Ir a Citas</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Tasks Card */}
@@ -276,6 +343,36 @@ const styles = StyleSheet.create({
     color: '#999',
     textTransform: 'capitalize',
   },
+  nutritionistCard: {
+    backgroundColor: '#e8f5e9',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#c8e6c9',
+  },
+  nutritionistTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1b5e20',
+    marginBottom: 6,
+  },
+  nutritionistText: {
+    color: '#355e3b',
+    lineHeight: 20,
+    marginBottom: 12,
+  },
+  primaryButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#2e7d32',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  primaryButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
   card: {
     backgroundColor: '#fff',
     borderRadius: 10,
@@ -294,6 +391,70 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: '#333',
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    marginTop: 14,
+  },
+  summaryItem: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  summaryLabel: {
+    color: '#777',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  summaryValue: {
+    color: '#1f2937',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  summaryHint: {
+    color: '#999',
+    fontSize: 11,
+    marginTop: 3,
+  },
+  shortcuts: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  shortcutButton: {
+    width: '48%',
+    backgroundColor: '#f5f9ff',
+    borderRadius: 8,
+    paddingVertical: 13,
+    paddingHorizontal: 8,
+    marginBottom: 8,
+    alignItems: 'center',
+  },
+  shortcutText: {
+    color: '#2563a6',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  emptyText: {
+    color: '#888',
+    marginTop: 12,
+  },
+  appointmentText: {
+    color: '#555',
+    fontSize: 13,
+    paddingTop: 10,
+  },
+  outlineButton: {
+    borderWidth: 1,
+    borderColor: '#3498db',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  outlineButtonText: {
+    color: '#2878b8',
+    fontWeight: '700',
   },
   cardBadge: {
     fontSize: 12,

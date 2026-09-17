@@ -37,6 +37,7 @@ import NutritionistRecipesScreen from './src/nutritionist/RecipesScreen'
 import NutritionistRecommendationsScreen from './src/nutritionist/RecommendationsScreen'
 import NutritionistMealPlansScreen from './src/nutritionist/MealPlansScreen'
 import ContactRequiredScreen from './src/ContactRequiredScreen'
+import DashboardScreen from './src/DashboardScreen'
 
 // Configura tu URL de backend
 const BACKEND_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://health-nutrition-control.onrender.com').replace(/\/api$/, '')
@@ -733,6 +734,9 @@ function AppContent() {
           }}
         />
       )
+    }
+    if ((view === 'home' || view === 'dashboard') && token && profile) {
+      return <DashboardScreen onNavigate={navigate} profile={profile} />
     }
     if (view === 'medicinas') {
       console.log('[renderContent] Showing MedicinesScreen');
