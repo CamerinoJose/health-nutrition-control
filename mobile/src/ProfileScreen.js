@@ -157,7 +157,7 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
   return (
     <ScrollView style={{flex: 1}}>
       <View style={styles.container}>
-        <Text style={styles.title}>👤 Perfil de Salud</Text>
+        <Text style={styles.title}>👤 Mi Perfil</Text>
         <View style={styles.accountSection}>
           <Text style={styles.sectionTitle}>📇 Datos personales</Text>
           <Text style={styles.fieldLabel}>Nombre</Text>

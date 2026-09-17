@@ -1034,7 +1034,7 @@ function AppContent() {
               <Text style={styles.navButtonText}>🏠 Inicio</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('profile'); closeDrawer(); }}>
-              <Text style={styles.navButtonText}>👤 Perfil de Salud</Text>
+              <Text style={styles.navButtonText}>👤 Mi Perfil</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('mealplan'); closeDrawer(); }}>
               <Text style={styles.navButtonText}>🍱 Plan de Comidas</Text>
