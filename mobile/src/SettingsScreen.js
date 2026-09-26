@@ -10,6 +10,7 @@ import {
   Alert
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import * as Application from 'expo-application';
 import api from './api';
 
 export default function SettingsScreen({ onNavigate, onLogout, onRefreshProfile, profile }) {
@@ -110,7 +111,11 @@ export default function SettingsScreen({ onNavigate, onLogout, onRefreshProfile,
           <Text style={styles.sectionTitle}>ℹ️ Información</Text>
           <View style={styles.infoItem}>
             <Text style={styles.infoLabel}>Versión</Text>
-            <Text style={styles.infoValue}>1.0.0</Text>
+            <Text style={styles.infoValue}>{Application.nativeApplicationVersion || 'No disponible'}</Text>
+          </View>
+          <View style={styles.infoItem}>
+            <Text style={styles.infoLabel}>Build</Text>
+            <Text style={styles.infoValue}>{Application.nativeBuildVersion || 'No disponible'}</Text>
           </View>
           <View style={styles.infoItem}>
             <Text style={styles.infoLabel}>Usuario</Text>

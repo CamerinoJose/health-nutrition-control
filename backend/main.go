@@ -497,37 +497,7 @@ func main() {
 		auth.Use(authMiddleware())
 		{
 			// Medicines CRUD + daily history endpoints
-			auth.GET("/medicines", func(c *gin.Context) {
-				userID := getUserIDFromContext(c)
-				today := time.Now().Format("2006-01-02")
-				rows, err := queryDB(`
-					SELECT m.id, m.user_id, m.name, m.time, d.taken_at
-					FROM medicines m
-					LEFT JOIN (
-						SELECT medicine_id, MAX(taken_at) AS taken_at
-						FROM medicine_logs
-						WHERE user_id = ? AND taken_date = ?
-						GROUP BY medicine_id
-					) d ON d.medicine_id = m.id
-					WHERE m.user_id = ?
-					ORDER BY m.id DESC
-				`, userID, today, userID)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al consultar medicinas"})
-					return
-				}
-				defer rows.Close()
-				var meds []Medicine
-				for rows.Next() {
-					var m Medicine
-					var takenAt sql.NullString
-					if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.Time, &takenAt); err == nil {
-						m.Taken = takenAt.Valid && takenAt.String != ""
-						meds = append(meds, m)
-					}
-				}
-				c.JSON(http.StatusOK, meds)
-			})
+			auth.GET("/medicines", listMedicinesHandler)
 
 			auth.GET("/medicines/history", func(c *gin.Context) {
 				userID := getUserIDFromContext(c)
@@ -556,20 +526,7 @@ func main() {
 				c.JSON(http.StatusOK, history)
 			})
 
-			auth.POST("/medicines", func(c *gin.Context) {
-				userID := getUserIDFromContext(c)
-				var req Medicine
-				if err := c.BindJSON(&req); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
-					return
-				}
-				_, err := execDB("INSERT INTO medicines (user_id, name, time, taken) VALUES (?, ?, ?, 0)", userID, req.Name, req.Time)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo agregar medicina"})
-					return
-				}
-				c.JSON(http.StatusOK, gin.H{"message": "Medicina agregada"})
-			})
+			auth.POST("/medicines", createMedicineHandler)
 
 			auth.PUT("/medicines/:id", func(c *gin.Context) {
 				userID := getUserIDFromContext(c)
@@ -1486,6 +1443,53 @@ func getUserIDFromContext(c *gin.Context) int {
 		return 0
 	}
 	return claims.UserID
+}
+
+func listMedicinesHandler(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	today := time.Now().Format("2006-01-02")
+	rows, err := queryDB(`
+		SELECT m.id, m.user_id, m.name, m.time, d.taken_at
+		FROM medicines m
+		LEFT JOIN (
+			SELECT medicine_id, MAX(taken_at) AS taken_at
+			FROM medicine_logs
+			WHERE user_id = ? AND taken_date = ?
+			GROUP BY medicine_id
+		) d ON d.medicine_id = m.id
+		WHERE m.user_id = ?
+		ORDER BY m.id DESC
+	`, userID, today, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al consultar medicinas"})
+		return
+	}
+	defer rows.Close()
+	var meds []Medicine
+	for rows.Next() {
+		var medicine Medicine
+		var takenAt sql.NullString
+		if err := rows.Scan(&medicine.ID, &medicine.UserID, &medicine.Name, &medicine.Time, &takenAt); err == nil {
+			medicine.Taken = takenAt.Valid && takenAt.String != ""
+			meds = append(meds, medicine)
+		}
+	}
+	c.JSON(http.StatusOK, meds)
+}
+
+func createMedicineHandler(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	var req Medicine
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
+		return
+	}
+	_, err := execDB("INSERT INTO medicines (user_id, name, time, taken) VALUES (?, ?, ?, ?)", userID, req.Name, req.Time, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo agregar medicina"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Medicina agregada"})
 }
 
 // --- Middleware ---

@@ -1,8 +1,105 @@
 package main
 
 import (
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v4"
 )
+
+func TestMedicineCreationAndListWithBooleanTaken(t *testing.T) {
+	t.Run("sqlite", func(t *testing.T) {
+		runMedicineEndpointTest(t, "sqlite", ":memory:", true)
+	})
+	t.Run("postgres", func(t *testing.T) {
+		dsn := os.Getenv("MEDICINES_TEST_POSTGRES_DSN")
+		if dsn == "" {
+			t.Skip("MEDICINES_TEST_POSTGRES_DSN is not set")
+		}
+		runMedicineEndpointTest(t, "postgres", dsn, false)
+	})
+}
+
+func runMedicineEndpointTest(t *testing.T, driver, dsn string, sqlite bool) {
+	t.Helper()
+
+	testDB, err := sql.Open(driver, dsn)
+	if err != nil {
+		t.Fatal("could not open test database")
+	}
+	testDB.SetMaxOpenConns(1)
+	if err := testDB.Ping(); err != nil {
+		_ = testDB.Close()
+		t.Fatal("could not connect to test database")
+	}
+
+	previousDB, previousSQLite, previousJWTKey := db, usingSQLite, jwtKey
+	db, usingSQLite, jwtKey = testDB, sqlite, []byte("medicine-test-secret")
+	t.Cleanup(func() {
+		_ = testDB.Close()
+		db, usingSQLite, jwtKey = previousDB, previousSQLite, previousJWTKey
+	})
+
+	idDefinition := "SERIAL PRIMARY KEY"
+	if sqlite {
+		idDefinition = "INTEGER PRIMARY KEY AUTOINCREMENT"
+	}
+	if _, err := testDB.Exec("CREATE TEMP TABLE medicines (id " + idDefinition + ", user_id INTEGER, name TEXT, time TEXT, taken BOOLEAN DEFAULT FALSE)"); err != nil {
+		t.Fatalf("could not create temporary medicines table: %v", err)
+	}
+	if _, err := testDB.Exec("CREATE TEMP TABLE medicine_logs (id " + idDefinition + ", user_id INTEGER NOT NULL, medicine_id INTEGER NOT NULL, taken_date TEXT NOT NULL, taken_at TEXT NOT NULL)"); err != nil {
+		t.Fatalf("could not create temporary medicine logs table: %v", err)
+	}
+
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{UserID: 42}).SignedString(jwtKey)
+	if err != nil {
+		t.Fatal("could not sign test token")
+	}
+
+	router := gin.New()
+	api := router.Group("/api")
+	api.Use(authMiddleware())
+	api.POST("/medicines", createMedicineHandler)
+	api.GET("/medicines", listMedicinesHandler)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/medicines", strings.NewReader(`{"name":"Breakfast medicine","time":"07:30"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("create medicine returned status %d", response.Code)
+	}
+	var taken bool
+	if err := queryRowDB("SELECT taken FROM medicines WHERE user_id = ?", 42).Scan(&taken); err != nil {
+		t.Fatal("could not read stored medicine taken value")
+	}
+	if taken {
+		t.Fatal("new medicine should be stored with taken=false")
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/medicines", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list medicines returned status %d", response.Code)
+	}
+
+	var medicinesList []Medicine
+	if err := json.Unmarshal(response.Body.Bytes(), &medicinesList); err != nil {
+		t.Fatalf("could not decode medicines response: %v", err)
+	}
+	if len(medicinesList) != 1 || medicinesList[0].Name != "Breakfast medicine" || medicinesList[0].Time != "07:30" || medicinesList[0].Taken {
+		t.Fatalf("unexpected medicines response: %+v", medicinesList)
+	}
+}
 
 // Test user authentication
 func TestUserRegistration(t *testing.T) {
