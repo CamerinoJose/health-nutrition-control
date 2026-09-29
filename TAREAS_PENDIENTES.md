@@ -1,3 +1,42 @@
+# Estado y acuerdo vigente — continuidad de BienestarApp
+
+Esta sección prevalece sobre los reportes históricos de abajo.
+
+## Forma de trabajo acordada
+
+Conversar con ChatGPT para decidir cómo continuar y preparar prompts concretos para Codex. Codex implementa y verifica los cambios de código. Cuando el usuario solicita un prompt, entregar el prompt sin ejecutar por cuenta propia la implementación descrita. Al retomar, revisar este archivo y actualizarlo con evidencia.
+
+Carpeta exclusiva: C:\Users\camer\github. No leer ni modificar OneDrive.
+No hay recordatorios automáticos programados. Este archivo permite recuperar el contexto; no presupone memoria automática entre conversaciones distintas.
+
+## Estado confirmado y reportado
+
+- BienestarApp: Android y web; backend Go con soporte PostgreSQL; módulos de salud, alimentación, medicinas, recordatorios, progreso, citas y mensajes. No todos están verificados en producción.
+- APK disponible: 0.1.0, build 8. https://expo.dev/artifacts/eas/SsYwNd4maI_IgtiZz6R1siBnxxJUkuPa9zxpE3EMsX4.apk
+- INSERT de medicines corregido para enviar false al campo booleano taken. Configuración obtiene versión y build nativos.
+- Evidencia anterior: regresión aprobada en PostgreSQL 18 aislado y 86 pruebas móviles aprobadas.
+- Commit 3cf014e publicado en origin/main: https://github.com/CamerinoJose/health-nutrition-control/commit/3cf014e . Push confirmado en esta conversación. La copia local quedó limpia en ese momento; esta actualización documental es posterior.
+- Render: despliegue de ese commit y conexión efectiva a PostgreSQL todavía sin confirmar. GitHub no devolvió estados de despliegue.
+- 2026-09-26: el usuario confirmó que la APK ya permite guardar medicinas en el teléfono. El fallo de guardado inicial queda resuelto según su prueba. Esta confirmación no identifica por sí sola el commit activo de Render ni acredita cada escenario de pruebas.
+
+## Lista vigente en orden
+
+- [ ] 1. Confirmar Render: commit 3cf014e activo y backend conectado a PostgreSQL.
+- [x] 2a. Guardado de medicinas desde teléfono confirmado por el usuario el 2026-09-26.
+- [ ] 2b. Registrar confirmación específica de ambos modos: hora fija y ligada a comida.
+- [ ] 3. Comprobar persistencia y estado tomada después de cerrar y abrir la app.
+- [ ] 4. Confirmar visualmente versión 0.1.0 / build 8 en Configuración.
+- [ ] 5. Verificar recordatorios a la hora prevista y con la app en segundo plano.
+- [ ] 6. Smartwatch EN ESPERA: el usuario no tiene uno actualmente (2026-09-26). Retomar cuando disponga de dispositivo; no bloquea el resto del proyecto.
+- [ ] 7. Probar alimentación, perfil, progreso, citas y mensajes; registrar fallos concretos.
+- [ ] 8. Depurar documentación histórica y sustituir porcentajes y estados antiguos por evidencia actual.
+
+Cierre del 2026-09-26: el usuario solicita terminar por hoy y continuar mañana. Contexto y pendientes guardados; no se programó recordatorio. Al retomar, revisar qué comprobaciones del teléfono ya realizó y registrar resultados sin asumirlos: persistencia, estado tomada, ambos horarios y versión/build. Después priorizar recordatorios en segundo plano. La verificación técnica de Render sigue pendiente; smartwatch aplazado hasta contar con dispositivo. No hace falta generar otra APK solo para la corrección actual del backend.
+
+---
+
+# Registro histórico de seguimiento
+
 # Seguimiento vigente de BienestarApp
 
 Actualizado: 2026-09-25. Carpeta exclusiva: C:\Users\camer\github.
