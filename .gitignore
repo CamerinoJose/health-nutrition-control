@@ -85,3 +85,4 @@ backend/*.csv
 /*.jpg
 /*.jpeg
 mobile/*.broken*
+mobile/keystore.properties
