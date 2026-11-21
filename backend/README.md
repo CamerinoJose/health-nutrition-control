@@ -35,6 +35,13 @@ go run .
 
 Si no se configura, usará una clave de desarrollo (mostrará un warning).
 
+### Gemini
+
+Configura `GEMINI_API_KEY` únicamente en el entorno del backend. Los chats web y
+móvil envían sus mensajes al endpoint autenticado `/api/gemini/chat`; la clave no
+debe incluirse en `app.json`, variables `EXPO_PUBLIC_*` ni en el bundle del cliente.
+`GEMINI_MODEL` es opcional y por defecto usa `gemini-2.5-pro`.
+
 ### CORS (Web / ngrok)
 
 Por defecto, el backend permite orígenes locales de desarrollo (Vite) y el dominio web de Render.

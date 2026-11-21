@@ -170,7 +170,7 @@ Cada request:
 - `axios` - HTTP Client
 - `react-i18next` - Internacionalización
 - `chart.js` - Gráficas
-- `@google/generative-ai` - 🚧 PENDIENTE
+- Gemini mediante el endpoint autenticado del backend
 
 ### Mobile
 - `react-native` - Framework móvil
@@ -178,7 +178,7 @@ Cada request:
 - `axios` - HTTP Client
 - `async-storage` - Local storage
 - `expo-web-browser` - OAuth
-- `@google/generative-ai` - 🚧 PENDIENTE
+- Gemini mediante el endpoint autenticado del backend
 
 ---
 
@@ -227,10 +227,9 @@ POST   /messages              (Enviar mensaje)
 GET    /messages/conversations (Lista de chats)
 ```
 
-### Gemini (Próximamente)
+### Gemini
 ```
-POST   /ai/chat               (Enviar mensaje a Gemini)
-GET    /ai/chat-history       (Historial de IA)
+POST   /gemini/chat           (Enviar mensaje; requiere JWT)
 ```
 
 ---

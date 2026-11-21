@@ -67,7 +67,6 @@
       "@react-native-community/datetimepicker"
     ],
     "extra": {
-      "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyDqSJeMrcbX4-tosZchFm-Vbz0jih6gJu0",
       "eas": {
         "projectId": "128cbc0f-4c59-41cb-9159-fde7782f3810"
       }

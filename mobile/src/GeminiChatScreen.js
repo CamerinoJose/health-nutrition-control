@@ -11,9 +11,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import Constants from 'expo-constants';
+import api from './api';
 
 const GeminiChatScreen = ({ onNavigate, profile }) => {
   const [messages, setMessages] = useState([
@@ -27,9 +25,6 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollViewRef = useRef();
-  // Use Constants.expoConfig.extra for Expo Go compatibility
-  const apiKey = Constants.expoConfig?.extra?.EXPO_PUBLIC_GEMINI_API_KEY || '';
-  const genAI = useRef(new GoogleGenerativeAI(apiKey)).current;
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -56,24 +51,14 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
     setLoading(true);
 
     try {
-      const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-
-      const systemPrompt = `Eres un asistente de nutrición amigable y experto. Ayudas a los usuarios con:
-- Consejos de nutrición y alimentación saludable
-- Información sobre alimentos y sus beneficios
-- Recomendaciones de recetas saludables
-- Planes de comidas personalizadas
-- Información sobre calorías, proteínas, vitaminas y minerales
-- Motivación para alcanzar objetivos de salud
-
-Responde siempre en español, de manera amigable y clara. Sé conciso pero informativo.
-Si el usuario es de ${profile?.name || 'un usuario'}, personaliza tus respuestas cuando sea apropiado.`;
-
-      const prompt = `${systemPrompt}\n\nUsuario: ${inputText}`;
-
-      const result = await model.generateContent(prompt);
-      const response = result.response;
-      const text = response.text();
+      const response = await api.post('/gemini/chat', {
+        message: inputText,
+        profileName: profile?.name || '',
+      });
+      const text = response.data?.text;
+      if (typeof text !== 'string' || !text.trim()) {
+        throw new Error('Empty response from assistant');
+      }
 
       const botMessage = {
         id: (Date.now() + 1).toString(),
@@ -84,11 +69,11 @@ Si el usuario es de ${profile?.name || 'un usuario'}, personaliza tus respuestas
 
       setMessages((prev) => [...prev, botMessage]);
       scrollToBottom();
-    } catch (error) {
-      console.error('Error:', error);
+    } catch {
+      console.error('Gemini chat request failed.');
       const errorMessage = {
         id: (Date.now() + 1).toString(),
-        text: '❌ Error al conectar con Gemini. Por favor, intenta de nuevo.',
+        text: '❌ Error al conectar con el asistente de IA. Por favor, intenta de nuevo.',
         sender: 'bot',
         timestamp: new Date(),
       };
