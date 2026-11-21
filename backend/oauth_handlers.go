@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,9 +24,13 @@ var oauthStates = make(map[string]time.Time)
 var oauthStateToRedirect = make(map[string]string) // Store the redirect URI for each state
 var statesMutex sync.Mutex
 
-// Almacenar tokens temporales para que el app los consulte
-var oauthTokens = make(map[string]string)
-var tokensMutex sync.Mutex
+func registerOAuthRoutes(api *gin.RouterGroup) {
+	for _, provider := range []string{"google", "facebook", "github"} {
+		api.GET("/auth/"+provider, oauthInitHandler(provider))
+		api.GET("/auth/"+provider+"/callback", oauthCallbackHandler(provider))
+		api.GET("/auth/"+provider+"/success", oauthSuccessHandler)
+	}
+}
 
 // Configuración OAuth (en producción usar variables de entorno)
 type OAuthConfig struct {
@@ -146,11 +151,9 @@ func oauthInitHandler(provider string) gin.HandlerFunc {
 		if mobileRedirectUri != "" {
 			// Si viene del móvil, usar ese URI
 			successUrl = mobileRedirectUri
-			log.Printf("[OAUTH] Using mobile redirect_uri: %s", mobileRedirectUri)
 		} else {
 			// Si no, usar la URL por defecto del backend
 			successUrl = fmt.Sprintf("%s://%s/api/auth/%s/success", scheme, host, provider)
-			log.Printf("[OAUTH] No redirect_uri param, using default: %s", successUrl)
 		}
 
 		state := generateOAuthState()
@@ -161,10 +164,6 @@ func oauthInitHandler(provider string) gin.HandlerFunc {
 		statesMutex.Unlock()
 
 		log.Printf("[OAUTH] Init handler - Provider: %s", provider)
-		log.Printf("[OAUTH] Init handler - Using redirect_uri: %s", config.RedirectURL)
-		log.Printf("[OAUTH] Init handler - SuccessUrl: %s", successUrl)
-		log.Printf("[OAUTH] Init handler - State: %s", state)
-		log.Printf("[OAUTH] Init handler - Storing state->redirect mapping: %s -> %s", state, successUrl)
 
 		authURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&state=%s&scope=%s",
 			config.AuthURL,
@@ -173,8 +172,6 @@ func oauthInitHandler(provider string) gin.HandlerFunc {
 			state,
 			getOAuthScope(provider),
 		)
-
-		log.Printf("[OAUTH] Full auth URL: %s", authURL)
 
 		c.Redirect(http.StatusTemporaryRedirect, authURL)
 	}
@@ -197,10 +194,6 @@ func oauthCallbackHandler(provider string) gin.HandlerFunc {
 
 		log.Printf("[OAUTH] ============ CALLBACK HANDLER ============")
 		log.Printf("[OAUTH] Provider: %s", provider)
-		log.Printf("[OAUTH] Code: %s", code[:10]+"...")
-		log.Printf("[OAUTH] State (raw): %s", stateRaw)
-		log.Printf("[OAUTH] Request.Host: %s", c.Request.Host)
-		log.Printf("[OAUTH] Request.Header Host: %s", c.Request.Header.Get("Host"))
 
 		// Look up the redirect URI from our mapping
 		statesMutex.Lock()
@@ -210,9 +203,7 @@ func oauthCallbackHandler(provider string) gin.HandlerFunc {
 
 		if !found {
 			successUrl = fmt.Sprintf("https://%s/api/auth/%s/success", c.Request.Host, provider)
-			log.Printf("[OAUTH] State not found in mapping, using default: %s", successUrl)
-		} else {
-			log.Printf("[OAUTH] Found redirect URI in mapping: %s", successUrl)
+			log.Print("[OAUTH] State not found in redirect mapping")
 		}
 
 		if !validateOAuthState(stateRaw) {
@@ -239,8 +230,6 @@ func oauthCallbackHandler(provider string) gin.HandlerFunc {
 			return
 		}
 
-		log.Printf("[OAUTH] User info retrieved: %v", userInfo["email"])
-
 		// Buscar o crear usuario
 		_, token, err := findOrCreateSocialUser(provider, userInfo)
 		if err != nil {
@@ -249,23 +238,14 @@ func oauthCallbackHandler(provider string) gin.HandlerFunc {
 			return
 		}
 
-		// Almacenar token temporalmente para que el app lo consulte
-		tokensMutex.Lock()
-		oauthTokens["last_token"] = token
-		oauthTokens["last_token_expiry"] = fmt.Sprintf("%d", time.Now().Add(5*time.Minute).Unix())
-		tokensMutex.Unlock()
-
 		// Construir la URL final con el token
 		finalRedirect := fmt.Sprintf("%s?token=%s", successUrl, url.QueryEscape(token))
 		log.Printf("[OAUTH] ============ FINAL REDIRECT ============")
-		log.Printf("[OAUTH] Success URL: %s", successUrl)
-		log.Printf("[OAUTH] Final redirect URL: %s", finalRedirect)
-		log.Printf("[OAUTH] Token length: %d", len(token))
 		log.Printf("[OAUTH] ============ END CALLBACK ============")
 
 		// Para mobile deep links, usar HTML redirect para mejor compatibilidad con Chrome Custom Tabs
 		// Esto permite que el navegador se cierre automáticamente al activar el deep link
-		if len(successUrl) > 0 && (successUrl[0:10] == "bienestarap" || successUrl[0:4] == "exp:") {
+		if strings.HasPrefix(successUrl, "bienestarap") || strings.HasPrefix(successUrl, "exp:") {
 			log.Printf("[OAUTH] Detected mobile deep link, using HTML redirect")
 			htmlRedirect := fmt.Sprintf(`<!DOCTYPE html>
 <html>
@@ -467,32 +447,4 @@ func oauthSuccessHandler(c *gin.Context) {
 		"token":   token,
 		"message": "Authentication successful! You can close this window.",
 	})
-}
-
-// getLastOAuthTokenHandler returns the last generated OAuth token
-// The app calls this after openAuthSessionAsync returns to get the token
-func getLastOAuthTokenHandler(c *gin.Context) {
-	tokensMutex.Lock()
-	defer tokensMutex.Unlock()
-
-	token, exists := oauthTokens["last_token"]
-	expiry, expiryExists := oauthTokens["last_token_expiry"]
-
-	if !exists || !expiryExists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no token available"})
-		return
-	}
-
-	// Check if token is still valid
-	var expiryTime int64
-	fmt.Sscanf(expiry, "%d", &expiryTime)
-	if time.Now().Unix() > expiryTime {
-		// Token expired, delete it
-		delete(oauthTokens, "last_token")
-		delete(oauthTokens, "last_token_expiry")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "token expired"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"token": token})
 }

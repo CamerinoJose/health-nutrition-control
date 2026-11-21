@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -142,6 +143,21 @@ func TestHandleGeminiChatHidesUpstreamErrors(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "provider details") {
 		t.Fatal("response leaked provider error details")
+	}
+}
+
+func TestGenerateGeminiResponseReportsStatusWithoutProviderDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "secret provider details", http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	_, err := generateGeminiResponse(context.Background(), server.Client(), "test-key", "test-model", server.URL, geminiChatRequest{Message: "hello"})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 429") {
+		t.Fatalf("expected upstream status in error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "test-key") {
+		t.Fatal("error exposed sensitive details")
 	}
 }
 
