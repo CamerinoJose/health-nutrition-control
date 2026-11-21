@@ -58,6 +58,32 @@ type geminiGenerateResponse struct {
 	} `json:"candidates"`
 }
 
+func geminiErrorReason(body io.Reader) string {
+	var response struct {
+		Error struct {
+			Message string `json:"message"`
+			Details []struct {
+				Reason string `json:"reason"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, maxGeminiResponseBytes)).Decode(&response); err != nil {
+		return "unavailable"
+	}
+	for _, detail := range response.Error.Details {
+		switch detail.Reason {
+		case "API_KEY_INVALID", "API_KEY_SERVICE_BLOCKED", "API_KEY_HTTP_REFERRER_BLOCKED",
+			"API_KEY_IP_ADDRESS_BLOCKED", "API_KEY_ANDROID_APP_BLOCKED", "API_KEY_IOS_APP_BLOCKED",
+			"SERVICE_DISABLED", "BILLING_DISABLED", "CONSUMER_SUSPENDED", "USER_PROJECT_DENIED":
+			return detail.Reason
+		}
+	}
+	if strings.Contains(strings.ToLower(response.Error.Message), "api key was reported as leaked") {
+		return "API_KEY_REPORTED_LEAKED"
+	}
+	return "unavailable"
+}
+
 func geminiChatHandler(c *gin.Context) {
 	model := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
 	if model == "" {
@@ -150,7 +176,7 @@ func generateGeminiResponse(
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("Gemini API returned HTTP %d", response.StatusCode)
+		return "", fmt.Errorf("Gemini API returned HTTP %d (reason: %s)", response.StatusCode, geminiErrorReason(response.Body))
 	}
 
 	var result geminiGenerateResponse
