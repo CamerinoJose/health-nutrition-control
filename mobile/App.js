@@ -143,7 +143,7 @@ function AppContent() {
   const skipNotifications = isExpoGo && isAndroid
   const [appIsReady, setAppIsReady] = useState(false);
   const [token, setToken] = useState(null)
-  const [view, setView] = useState('home') // home | login | register | dashboard | mealplan | progress | achievements | recipes | appointments | messages | support | settings
+  const [view, setView] = useState('home') // home | login | register | dashboard | mealplan | progress | achievements | recipes | appointments | messages | support | settings | gemini
   const [postLoginTarget, setPostLoginTarget] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -1047,6 +1047,9 @@ function AppContent() {
             </TouchableOpacity>
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('messages'); closeDrawer(); }}>
               <Text style={styles.navButtonText}>💬 Mensajes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('gemini'); closeDrawer(); }}>
+              <Text style={styles.navButtonText}>✨ Gemini AI</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('settings'); closeDrawer(); }}>
               <Text style={styles.navButtonText}>⚙️ Ajustes</Text>
