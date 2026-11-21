@@ -161,6 +161,23 @@ func TestGenerateGeminiResponseReportsStatusWithoutProviderDetails(t *testing.T)
 	}
 }
 
+func TestGeminiErrorReasonOnlyReportsKnownCategories(t *testing.T) {
+	tests := []struct {
+		body string
+		want string
+	}{
+		{`{"error":{"details":[{"reason":"SERVICE_DISABLED","metadata":{"secret":"do-not-log"}}]}}`, "SERVICE_DISABLED"},
+		{`{"error":{"message":"Your API key was reported as leaked. Please use another API key."}}`, "API_KEY_REPORTED_LEAKED"},
+		{`{"error":{"message":"sensitive message","details":[{"reason":"sensitive value"}]}}`, "unavailable"},
+		{`not-json`, "unavailable"},
+	}
+	for _, test := range tests {
+		if got := geminiErrorReason(strings.NewReader(test.body)); got != test.want {
+			t.Errorf("reason = %q, want %q", got, test.want)
+		}
+	}
+}
+
 func TestAuthMiddlewareAcceptsGeminiToken(t *testing.T) {
 	previousJWTKey := jwtKey
 	jwtKey = []byte("gemini-test-jwt-secret")

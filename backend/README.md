@@ -42,7 +42,8 @@ móvil envían sus mensajes al endpoint autenticado `/api/gemini/chat`; la clave
 debe incluirse en `app.json`, variables `EXPO_PUBLIC_*` ni en el bundle del cliente.
 `GEMINI_MODEL` es opcional y por defecto usa `gemini-2.5-pro`.
 Si Google rechaza una solicitud, el registro del servidor indica su código HTTP
-sin registrar la clave ni el contenido de la respuesta.
+y, cuando es reconocido, un motivo predefinido, sin registrar la clave ni el
+contenido de la respuesta.
 
 El inicio de sesión móvil usa la redirección OAuth; no existe una ruta pública
 para consultar el último token. Las versiones antiguas que dependían de esa
