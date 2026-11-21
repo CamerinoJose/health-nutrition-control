@@ -78,3 +78,11 @@ ENV/
 
 # CSV data exports (optional - uncomment if you don't want to track them)
 # *.csv
+
+# Personal / health data (never commit)
+backend/*.csv
+*.pdf
+/*.jpg
+/*.jpeg
+mobile/*.broken*
+mobile/keystore.properties

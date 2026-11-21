@@ -1,5 +1,13 @@
 # 🏗️ ARQUITECTURA DEL PROYECTO
 
+## Revisión automática
+
+GitHub Actions ejecuta `go vet`, las pruebas y la compilación del backend,
+las pruebas y compilación web, y las pruebas móviles en cada pull request y
+push a `main`. La prueba de PostgreSQL usa una base temporal con credenciales
+de prueba, sin acceder a datos reales. Los resultados aparecen en **Actions**.
+Las ejecuciones consumen minutos de GitHub Actions según el plan disponible.
+
 ```
 BienestarApp/
 │

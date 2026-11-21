@@ -1,7 +1,0 @@
-id,user_id,title,description,appointment_date,appointment_time,status,notes,created_at,nutritionist_id,is_archived
-1,1,"Consulta con Nutriologa","Iniciar con nueva cita del año",2027-01-23,09:00,completed,"Esta cita es de Pareja, voy con mi esposa","2025-12-29 22:37:59",,0
-2,2,"Cita de parejas Dieta","Estoy haciendo una prueba",2026-01-25,10:30,"","veamos que pasa","2025-12-30 09:09:07",5,0
-3,2,"testeo en domingo","veamos que pasa",2026-01-26,09:00,scheduled,"","2025-12-30 09:10:39",5,0
-4,6,Si,Si,2026-01-03,09:00,scheduled,SI,"2025-12-31 12:10:07",5,1
-5,6,"Nutrióloga Maria ",Testeando,2026-01-14,09:30,scheduled,"","2026-01-04 13:08:11",5,0
-6,6,"Prueba de con Nutriologa","solo es una prueba",2026-01-09,09:00,scheduled,"Notas pruebas","2026-01-08 22:18:40",5,0

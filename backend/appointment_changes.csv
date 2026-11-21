@@ -1,4 +1,0 @@
-id,appointment_id,proposed_by,new_date,new_time,reason,status,created_at,responded_at
-1,3,5,2026-01-26,09:00,"porque me dio la gana",accepted,"2025-12-30 10:10:14","2025-12-30 11:20:07"
-2,2,5,2026-01-25,10:30,"Tengo otra cita a esa hora, ¿te parece mejor el día 25 a las 10:30?",accepted,"2025-12-30 20:27:03","2025-12-30 14:27:40"
-3,3,5,2026-01-27,11:00,"Hay una junta ese día, ¿podríamos cambiar al 27 a las 11:00?",rejected,"2025-12-30 20:56:28","2025-12-30 15:07:05"
