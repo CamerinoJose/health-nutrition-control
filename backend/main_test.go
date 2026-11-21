@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,39 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 )
+
+func TestOAuthLogsExcludeCredentialsAndLastTokenRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var requestLogs, oauthLogs bytes.Buffer
+	previousLogOutput := log.Writer()
+	log.SetOutput(&oauthLogs)
+	t.Cleanup(func() { log.SetOutput(previousLogOutput) })
+
+	router := gin.New()
+	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{Output: &requestLogs, Formatter: safeRequestLogFormatter}))
+	registerOAuthRoutes(router.Group("/api"))
+
+	for _, path := range []string{
+		"/api/auth/google/callback?code=secret-code&state=secret-state",
+		"/api/auth/google/success?token=secret-token",
+		"/api/auth/last-token",
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if strings.HasSuffix(path, "last-token") && response.Code != http.StatusNotFound {
+			t.Fatalf("last-token endpoint returned %d, want 404", response.Code)
+		}
+	}
+	logs := requestLogs.String() + oauthLogs.String()
+	for _, secret := range []string{"secret-code", "secret-state", "secret-token"} {
+		if strings.Contains(logs, secret) {
+			t.Fatalf("logs exposed %s", secret)
+		}
+	}
+	if !strings.Contains(requestLogs.String(), "/api/auth/google/callback") {
+		t.Fatal("request log omitted the callback path")
+	}
+}
 
 func TestMedicineCreationAndListWithBooleanTaken(t *testing.T) {
 	t.Run("sqlite", func(t *testing.T) {

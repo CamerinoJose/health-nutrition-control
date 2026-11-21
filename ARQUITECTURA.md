@@ -194,7 +194,6 @@ POST   /auth/logout           (Logout)
 GET    /auth/google           (Google OAuth init)
 GET    /auth/google/callback  (Google OAuth callback)
 GET    /auth/google/success   (OAuth success page)
-GET    /auth/last-token       (Obtener último token)
 ```
 
 ### Datos del Usuario

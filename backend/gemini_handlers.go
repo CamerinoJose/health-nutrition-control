@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -149,7 +150,7 @@ func generateGeminiResponse(
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", errors.New("Gemini API returned a non-success status")
+		return "", fmt.Errorf("Gemini API returned HTTP %d", response.StatusCode)
 	}
 
 	var result geminiGenerateResponse
