@@ -496,6 +496,8 @@ func main() {
 		auth := api.Group("")
 		auth.Use(authMiddleware())
 		{
+			auth.POST("/gemini/chat", geminiChatHandler)
+
 			// Medicines CRUD + daily history endpoints
 			auth.GET("/medicines", listMedicinesHandler)
 
