@@ -18,6 +18,8 @@ import './src/i18n'
 import { useTranslation } from 'react-i18next'
 import api from './src/api'
 import MedicinesScreen from './MedicinesScreen'
+import ReminderCenter from './src/ReminderCenter'
+import { reminderIdFromUrl } from './src/reminderAlarm'
 import DiabetesNotificationsScreen from './src/DiabetesNotificationsScreen'
 import { saveToken, getToken, clearToken } from './src/auth'
 import { startNotificationListening, stopNotificationListening, setupNotificationResponseHandler } from './src/notifications'
@@ -79,7 +81,7 @@ SplashScreen.preventAutoHideAsync().catch(err => {
 });
 
 export default function App() {
-  return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
+  return <SafeAreaProvider><AppContent /><ReminderCenter /></SafeAreaProvider>;
 }
 
 function AppContent() {
@@ -335,6 +337,7 @@ function AppContent() {
 
   // Handle deep link from OAuth callback
   async function handleDeepLink(event) {
+    if (reminderIdFromUrl(event.url)) return;
     console.log('=== HANDLE DEEP LINK TRIGGERED ===');
     const url = event.url;
     
@@ -427,7 +430,6 @@ function AppContent() {
 
     // Setup notification response handler
     const unsubscribeNotificationResponse = setupNotificationResponseHandler((data) => {
-      console.log('[App] Notification tapped:', data);
       if (data.type === 'message') {
         // Navegar a la pantalla de mensajes
         // La lista de conversaciones mostrará unread_count para guiar al usuario

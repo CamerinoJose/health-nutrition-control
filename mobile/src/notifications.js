@@ -117,8 +117,8 @@ async function pollForNotifications() {
 
       // Show local notification for each new notification and mark as read
       for (const notif of newNotifications) {
-        console.log('[Notifications] Found new notification:', notif.title);
-        await showLocalNotification(notif);
+        const displayed = await showLocalNotification(notif);
+        if (!displayed) return;
         shownNotificationIds.add(notif.id); // Track that we showed this
         // Mark as read immediately to prevent duplicates
         await markNotificationAsRead(notif.id);
@@ -137,8 +137,8 @@ async function pollForNotifications() {
 async function showLocalNotification(notif) {
   // Skip showing notifications in Expo Go on Android
   if (isExpoGo && Platform.OS === 'android') {
-    console.log('[Notifications] Skipping notification display in Expo Go:', notif.title);
-    return;
+    console.log('[Notifications] Skipping notification display in Expo Go');
+    return false;
   }
   
   try {
@@ -154,8 +154,10 @@ async function showLocalNotification(notif) {
       },
       trigger: null, // Show immediately
     });
+    return true;
   } catch (err) {
-    console.error('[Notifications] Error showing notification:', err.message);
+    console.error('[Notifications] Error showing notification');
+    return false;
   }
 }
 
@@ -177,7 +179,6 @@ export function setupNotificationResponseHandler(onNotificationResponse) {
   try {
     const subscription = Notifications.addNotificationResponseReceivedListener(
       response => {
-        console.log('[Notifications] Notification response:', response.notification.request.content.data);
         onNotificationResponse(response.notification.request.content.data);
       }
     );
