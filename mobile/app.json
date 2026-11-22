@@ -14,7 +14,7 @@
     "icon": "./assets/Logo_p_bienestar.png",
     "android": {
       "package": "com.bienestarappmobile",
-      "versionCode": 5,
+      "versionCode": 9,
       "adaptiveIcon": {
         "foregroundImage": "./assets/Logo_p_bienestar.png",
         "backgroundColor": "#ffffff"

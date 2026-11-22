@@ -7,6 +7,7 @@ import { getToken } from './src/auth';
 import { DEFAULT_MEAL_TIMES, loadMealTimes, normalizeMealTimes } from './src/mealTimes';
 import { DEFAULT_REMINDER_SETTINGS, loadReminderSettings, saveReminderSettings } from './src/reminderSettings';
 import api from './src/api';
+import { scheduleNextMedicineReminder, openReminder } from './src/reminderAlarm';
 
 const BACKEND_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://health-nutrition-control.onrender.com').replace(/\/api$/, '');
 const API_BASE = `${BACKEND_URL}/api`;
@@ -444,6 +445,13 @@ export default function MedicinesScreen({ onBack }) {
     }
   }
 
+  async function programarAlarmaPersistente(medicine) {
+    setLoading(true);
+    try { await scheduleNextMedicineReminder(medicine); }
+    catch (e) { Alert.alert('Recordatorio', e.message); }
+    finally { setLoading(false); }
+  }
+
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Text style={styles.title}>Medicinas</Text>
@@ -607,7 +615,12 @@ export default function MedicinesScreen({ onBack }) {
           }
           renderItem={({ item, index }) => (
             <View style={styles.medicineRow}>
-              <Text style={{ flex: 1, fontSize: 15 }}>💊 {item.name}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15 }}>💊 {item.name}</Text>
+                <TouchableOpacity accessibilityRole="button" disabled={loading} onPress={() => programarAlarmaPersistente(item)}>
+                  <Text style={{ color: '#1d4ed8', paddingVertical: 10 }}>🔔 Alarma persistente: próxima toma</Text>
+                </TouchableOpacity>
+              </View>
               <Text style={styles.timeLabel}>{item.time}</Text>
               <TouchableOpacity
                 style={[styles.confirmBtn, item.taken && styles.confirmBtnDone]}
@@ -622,6 +635,9 @@ export default function MedicinesScreen({ onBack }) {
       )}
 
       <View style={styles.bottomBar}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => openReminder()}>
+          <Text style={styles.backBtnText}>Pendientes / ✓ Hecho</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.notifBtn} onPress={programarNotificacionesMedicinas} disabled={loading}>
           <Text style={styles.notifBtnText}>🔔 Programar notificación diaria</Text>
         </TouchableOpacity>
