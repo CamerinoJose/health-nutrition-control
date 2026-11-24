@@ -23,7 +23,6 @@ import (
 	"github.com/ledongthuc/pdf"
 	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
-	_ "modernc.org/sqlite"
 )
 
 func boolToInt(b bool) int {
@@ -63,12 +62,7 @@ func resetPasswordHandler(c *gin.Context) {
 }
 
 var db *sql.DB
-var usingSQLite bool
-
 func rebindQuery(query string) string {
-	if usingSQLite {
-		return query
-	}
 	var builder strings.Builder
 	placeholder := 1
 	for _, char := range query {
@@ -240,24 +234,20 @@ func checkUpcomingAppointments() {
 	tomorrow := time.Now().Add(24 * time.Hour)
 	tomorrowDate := tomorrow.Format("2006-01-02")
 
-	recentReminderCondition := `datetime(n.created_at) >= datetime('now', '-24 hours')`
-	if !usingSQLite {
-		recentReminderCondition = `n.created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'`
-	}
 	rows, err := queryDB(fmt.Sprintf(`
 		SELECT a.id, a.user_id, a.title, a.appointment_date, a.appointment_time
 		FROM appointments a
 		WHERE a.appointment_date = ?
 		AND a.status = 'scheduled'
-		AND a.is_archived = 0
+		AND a.is_archived = FALSE
 		AND NOT EXISTS (
 			SELECT 1 FROM notifications n
 			WHERE n.user_id = a.user_id
 			AND n.type = 'appointment_reminder'
 			AND n.related_id = a.id
-			AND %s
+			AND n.created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
 		)
-	`, recentReminderCondition), tomorrowDate)
+	`), tomorrowDate)
 
 	if err != nil {
 		log.Printf("[Reminders] Error querying appointments: %v", err)
@@ -298,111 +288,47 @@ func checkUpcomingAppointments() {
 
 func main() {
 	jwtKey = getJWTKey()
+	pgUser := getenvOrDefault("POSTGRES_USER", "postgres")
+	pgPass := os.Getenv("POSTGRES_PASSWORD")
+	pgDB := getenvOrDefault("POSTGRES_DB", "bienestar")
+	pgHost := getenvOrDefault("POSTGRES_HOST", "localhost")
+	pgSSL := getenvOrDefault("POSTGRES_SSLMODE", "disable")
+	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=%s", pgUser, pgPass, pgDB, pgHost, pgSSL)
+
+	log.Printf("🐘 Connecting to PostgreSQL: %s@%s/%s", pgUser, pgHost, pgDB)
 	var err error
-
-	// Check if we should use SQLite (for local development)
-	useSQLite := os.Getenv("USE_SQLITE")
-	dbPath := getenvOrDefault("DB_PATH", "./data.db")
-
-	if useSQLite == "true" {
-		// SQLite mode (local development)
-		log.Printf("🔧 Using SQLite database: %s", dbPath)
-		db, err = sql.Open("sqlite", dbPath)
-		if err != nil {
-			log.Fatalf("Error connecting to SQLite: %v", err)
-		}
-		err = db.Ping()
-		if err != nil {
-			log.Fatalf("SQLite ping failed: %v", err)
-		}
-		log.Println("✅ Successfully connected to SQLite database!")
-
-		// SQLite foreign keys support
-		_, err = execDB("PRAGMA foreign_keys = ON")
-		if err != nil {
-			log.Fatal("Failed to enable foreign keys: ", err)
-		}
-
-	} else {
-		// PostgreSQL mode (production) with SQLite fallback
-		pgUser := getenvOrDefault("POSTGRES_USER", "postgres")
-		pgPass := os.Getenv("POSTGRES_PASSWORD")
-		pgDB := getenvOrDefault("POSTGRES_DB", "bienestar")
-		pgHost := getenvOrDefault("POSTGRES_HOST", "localhost")
-		pgSSL := getenvOrDefault("POSTGRES_SSLMODE", "disable")
-		connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=%s", pgUser, pgPass, pgDB, pgHost, pgSSL)
-
-		log.Printf("🐘 Connecting to PostgreSQL: %s@%s/%s", pgUser, pgHost, pgDB)
-		db, err = sql.Open("postgres", connStr)
-		if err == nil {
-			err = db.Ping()
-		}
-
-		if err != nil {
-			log.Printf("⚠️ PostgreSQL unavailable (%v). Falling back to SQLite at %s", err, dbPath)
-			useSQLite = "true"
-			db, err = sql.Open("sqlite", dbPath)
-			if err != nil {
-				log.Fatalf("Error connecting to SQLite fallback: %v", err)
-			}
-			err = db.Ping()
-			if err != nil {
-				log.Fatalf("SQLite fallback ping failed: %v", err)
-			}
-			_, err = execDB("PRAGMA foreign_keys = ON")
-			if err != nil {
-				log.Fatal("Failed to enable foreign keys: ", err)
-			}
-			log.Println("✅ Successfully connected to SQLite fallback database!")
-		} else {
-			log.Println("✅ Successfully connected to PostgreSQL database!")
-		}
+	db, err = sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatalf("Error opening PostgreSQL: %v", err)
 	}
-	usingSQLite = useSQLite == "true"
+	if err = db.Ping(); err != nil {
+		log.Fatalf("PostgreSQL unavailable: %v", err)
+	}
+	log.Println("✅ Successfully connected to PostgreSQL database!")
 
 	// Migración de tabla medicines
-	if useSQLite == "true" {
-		_, err = execDB(`CREATE TABLE IF NOT EXISTS medicines (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id INTEGER,
-			name TEXT,
-			time TEXT,
-			taken INTEGER DEFAULT 0
-		)`)
-		if err == nil {
-			_, err = execDB(`CREATE TABLE IF NOT EXISTS medicine_logs (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				user_id INTEGER NOT NULL,
-				medicine_id INTEGER NOT NULL,
-				taken_date TEXT NOT NULL,
-				taken_at TEXT NOT NULL,
-				FOREIGN KEY(medicine_id) REFERENCES medicines(id)
-			)`)
-		}
-	} else {
-		_, err = execDB(`CREATE TABLE IF NOT EXISTS medicines (
+	_, err = execDB(`CREATE TABLE IF NOT EXISTS medicines (
+		id SERIAL PRIMARY KEY,
+		user_id INTEGER,
+		name TEXT,
+		time TEXT,
+		taken BOOLEAN DEFAULT FALSE
+	)`)
+	if err == nil {
+		_, err = execDB(`CREATE TABLE IF NOT EXISTS medicine_logs (
 			id SERIAL PRIMARY KEY,
-			user_id INTEGER,
-			name TEXT,
-			time TEXT,
-			taken BOOLEAN DEFAULT FALSE
+			user_id INTEGER NOT NULL,
+			medicine_id INTEGER NOT NULL,
+			taken_date TEXT NOT NULL,
+			taken_at TEXT NOT NULL,
+			FOREIGN KEY(medicine_id) REFERENCES medicines(id)
 		)`)
-		if err == nil {
-			_, err = execDB(`CREATE TABLE IF NOT EXISTS medicine_logs (
-				id SERIAL PRIMARY KEY,
-				user_id INTEGER NOT NULL,
-				medicine_id INTEGER NOT NULL,
-				taken_date TEXT NOT NULL,
-				taken_at TEXT NOT NULL,
-				FOREIGN KEY(medicine_id) REFERENCES medicines(id)
-			)`)
-		}
 	}
 	if err != nil {
 		log.Fatal("No se pudieron crear las tablas de medicinas: ", err)
 	}
 
-	if err := migrate(useSQLite == "true"); err != nil {
+	if err := migrate(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -496,6 +422,8 @@ func main() {
 		auth := api.Group("")
 		auth.Use(authMiddleware())
 		{
+			auth.POST("/gemini/chat", geminiChatHandler)
+
 			// Medicines CRUD + daily history endpoints
 			auth.GET("/medicines", listMedicinesHandler)
 
@@ -669,9 +597,9 @@ func main() {
 	}
 }
 
-func migrate(useSQLite bool) error {
+func migrate() error {
 	var queries []string
-	if useSQLite {
+	if false {
 		queries = []string{
 			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT, nutritionist_id INTEGER, phone TEXT, contact_preference TEXT);`,
 			`CREATE TABLE IF NOT EXISTS histories (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
@@ -970,9 +898,17 @@ func migrate(useSQLite bool) error {
 	execDB(`ALTER TABLE meal_plans ADD COLUMN snacks TEXT;`)
 
 	// Add nutritionist_id column to users table if it doesn't exist
-	execDB(`ALTER TABLE users ADD COLUMN nutritionist_id INTEGER;`)
-	execDB(`ALTER TABLE users ADD COLUMN phone TEXT;`)
-	execDB(`ALTER TABLE users ADD COLUMN contact_preference TEXT;`)
+	for _, migration := range []string{
+		`ALTER TABLE users ADD COLUMN nutritionist_id INTEGER;`,
+		`ALTER TABLE users ADD COLUMN phone TEXT;`,
+		`ALTER TABLE users ADD COLUMN contact_preference TEXT;`,
+	} {
+		if _, err := execDB(migration); err != nil &&
+			!strings.Contains(strings.ToLower(err.Error()), "duplicate column") &&
+			!strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			return fmt.Errorf("contact profile migration failed: %w", err)
+		}
+	}
 
 	// Add nutritionist_id column to appointments table if it doesn't exist
 	execDB(`ALTER TABLE appointments ADD COLUMN nutritionist_id INTEGER;`)
@@ -981,59 +917,32 @@ func migrate(useSQLite bool) error {
 	execDB(`ALTER TABLE user_settings ADD COLUMN reminder_settings TEXT;`)
 
 	var socialErr error
-	if useSQLite {
-		_, socialErr = execDB(`CREATE TABLE IF NOT EXISTS social_accounts (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id INTEGER NOT NULL,
-			provider TEXT NOT NULL,
-			provider_user_id TEXT NOT NULL,
-			email TEXT,
-			name TEXT,
-			avatar_url TEXT,
-			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(id),
-			UNIQUE(provider, provider_user_id)
-		)`)
-	} else {
-		_, socialErr = execDB(`CREATE TABLE IF NOT EXISTS social_accounts (
-			id SERIAL PRIMARY KEY,
-			user_id INTEGER NOT NULL,
-			provider TEXT NOT NULL,
-			provider_user_id TEXT NOT NULL,
-			email TEXT,
-			name TEXT,
-			avatar_url TEXT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(id),
-			UNIQUE(provider, provider_user_id)
-		)`)
-	}
+	_, socialErr = execDB(`CREATE TABLE IF NOT EXISTS social_accounts (
+		id SERIAL PRIMARY KEY,
+		user_id INTEGER NOT NULL,
+		provider TEXT NOT NULL,
+		provider_user_id TEXT NOT NULL,
+		email TEXT,
+		name TEXT,
+		avatar_url TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id),
+		UNIQUE(provider, provider_user_id)
+	)`)
 	if socialErr != nil {
 		return socialErr
 	}
 
 	var auditErr error
-	if useSQLite {
-		_, auditErr = execDB(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			admin_user_id INTEGER NOT NULL,
-			action TEXT NOT NULL,
-			target_user_id INTEGER,
-			created_at TEXT NOT NULL,
-			FOREIGN KEY(admin_user_id) REFERENCES users(id)
-		)`)
-	} else {
-		_, auditErr = execDB(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
-			id SERIAL PRIMARY KEY,
-			admin_user_id INTEGER NOT NULL,
-			action TEXT NOT NULL,
-			target_user_id INTEGER,
-			created_at TEXT NOT NULL,
-			FOREIGN KEY(admin_user_id) REFERENCES users(id)
-		)`)
-	}
+	_, auditErr = execDB(`CREATE TABLE IF NOT EXISTS admin_audit_logs (
+		id SERIAL PRIMARY KEY,
+		admin_user_id INTEGER NOT NULL,
+		action TEXT NOT NULL,
+		target_user_id INTEGER,
+		created_at TEXT NOT NULL,
+		FOREIGN KEY(admin_user_id) REFERENCES users(id)
+	)`)
 	if auditErr != nil {
 		return auditErr
 	}
@@ -1051,6 +960,13 @@ func registerHandler(c *gin.Context) {
 		Password string `json:"password" binding:"required"`
 	}
 	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
+		return
+	}
+
+	req.Name = strings.Join(strings.Fields(req.Name), " ")
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	if req.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
 		return
 	}

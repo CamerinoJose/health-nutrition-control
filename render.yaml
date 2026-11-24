@@ -19,10 +19,6 @@ services:
         value: release
       - key: JWT_SECRET
         generateValue: true  # Render will generate a secure random value
-      - key: USE_SQLITE
-        value: "false"
-      - key: DB_PATH
-        value: ./data.db
     healthCheckPath: /health
 
 # Nota: con SQLite en Render sin disco persistente, la base puede reiniciarse

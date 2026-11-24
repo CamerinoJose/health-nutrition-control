@@ -1,6 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from './api';
 
 // Check if running in Expo Go
@@ -93,7 +94,26 @@ export function stopNotificationListening() {
     clearInterval(notificationPollInterval);
     notificationPollInterval = null;
     shownNotificationIds.clear(); // Clear tracked notifications
+    lastCheckedTime = null;
     console.log('[Notifications] Notification polling stopped');
+  }
+}
+
+export async function cancelAccountScheduledNotifications() {
+  try {
+    await Notifications.cancelAllScheduledNotificationsAsync();
+  } catch (error) {
+    console.warn('No se pudieron cancelar todas las notificaciones Expo');
+  }
+
+  try {
+    await AsyncStorage.multiRemove([
+      'bienestar_medicine_notif_ids_v1',
+      'bienestar_diabetes_notif_ids_v1',
+      'bienestar_meal_reminder_ids_v1',
+    ]);
+  } catch (error) {
+    console.warn('No se pudieron limpiar los registros locales de notificaciones');
   }
 }
 
@@ -117,8 +137,8 @@ async function pollForNotifications() {
 
       // Show local notification for each new notification and mark as read
       for (const notif of newNotifications) {
-        console.log('[Notifications] Found new notification:', notif.title);
-        await showLocalNotification(notif);
+        const displayed = await showLocalNotification(notif);
+        if (!displayed) return;
         shownNotificationIds.add(notif.id); // Track that we showed this
         // Mark as read immediately to prevent duplicates
         await markNotificationAsRead(notif.id);
@@ -137,8 +157,8 @@ async function pollForNotifications() {
 async function showLocalNotification(notif) {
   // Skip showing notifications in Expo Go on Android
   if (isExpoGo && Platform.OS === 'android') {
-    console.log('[Notifications] Skipping notification display in Expo Go:', notif.title);
-    return;
+    console.log('[Notifications] Skipping notification display in Expo Go');
+    return false;
   }
   
   try {
@@ -154,8 +174,10 @@ async function showLocalNotification(notif) {
       },
       trigger: null, // Show immediately
     });
+    return true;
   } catch (err) {
-    console.error('[Notifications] Error showing notification:', err.message);
+    console.error('[Notifications] Error showing notification');
+    return false;
   }
 }
 
@@ -177,7 +199,6 @@ export function setupNotificationResponseHandler(onNotificationResponse) {
   try {
     const subscription = Notifications.addNotificationResponseReceivedListener(
       response => {
-        console.log('[Notifications] Notification response:', response.notification.request.content.data);
         onNotificationResponse(response.notification.request.content.data);
       }
     );

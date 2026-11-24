@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -12,12 +12,29 @@ import {
   View,
 } from 'react-native';
 import api from './api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getContactProfile, saveContactProfile } from './auth';
 
 export default function ContactRequiredScreen({ profile, onSaved }) {
   const [name, setName] = useState(profile?.name || '');
   const [phone, setPhone] = useState(profile?.phone || '');
   const [contactPreference, setContactPreference] = useState(profile?.contact_preference || '');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    getContactProfile(profile?.user_id)
+      .then((cached) => {
+        if (!active || !cached) return;
+        if (!profile?.name && cached.name) setName(cached.name);
+        if (!profile?.phone && cached.phone) setPhone(cached.phone);
+        if (!profile?.contact_preference && cached.contact_preference) {
+          setContactPreference(cached.contact_preference);
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [profile?.user_id]);
 
   const saveContact = async () => {
     const normalizedPhone = phone.trim();
@@ -41,12 +58,14 @@ export default function ContactRequiredScreen({ profile, onSaved }) {
         phone: normalizedPhone,
         contact_preference: contactPreference,
       });
-      onSaved({
+      const updatedProfile = {
         ...profile,
         name: response.data.name || name.trim() || profile?.name,
         phone: response.data.phone || normalizedPhone,
         contact_preference: response.data.contact_preference || contactPreference,
-      });
+      };
+      await saveContactProfile(updatedProfile);
+      onSaved(updatedProfile);
     } catch (error) {
       console.error('Error saving required contact data:', error);
       Alert.alert('Error', 'No se pudieron guardar tus datos. Intenta nuevamente.');

@@ -3,6 +3,7 @@ import { View, Text, Button, ActivityIndicator, Alert, StyleSheet, ScrollView, T
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from './api';
 import HealthProfileForm from './HealthProfileForm';
+import { getContactProfile, saveContactProfile } from './auth';
 
 const HEALTH_PROFILE_STORAGE_KEY = 'bienestar_health_profile_v1';
 
@@ -17,6 +18,18 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
 
   useEffect(() => {
     loadProfile();
+    let active = true;
+    getContactProfile(accountProfile?.user_id)
+      .then((cached) => {
+        if (!active || !cached) return;
+        if (!accountProfile?.name && cached.name) setAccountName(cached.name);
+        if (!accountProfile?.phone && cached.phone) setAccountPhone(cached.phone);
+        if (!accountProfile?.contact_preference && cached.contact_preference) {
+          setContactPreference(cached.contact_preference);
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
   }, []);
 
   const loadProfile = async () => {
@@ -80,6 +93,7 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
       };
       setAccountName(updated.name);
       setAccountPhone(updated.phone);
+      await saveContactProfile(updated);
       if (onAccountProfileUpdated) onAccountProfileUpdated(updated);
       Alert.alert('Éxito', 'Datos personales actualizados');
     } catch (error) {

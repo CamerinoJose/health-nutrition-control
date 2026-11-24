@@ -9,7 +9,7 @@ function addLog(msg) {
   logBuffer.push(msg);
 }
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
-import { View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform, LogBox } from 'react-native'
+import { View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform, LogBox, KeyboardAvoidingView } from 'react-native'
 import Constants from 'expo-constants'
 import * as WebBrowser from 'expo-web-browser'
 import * as SplashScreen from 'expo-splash-screen'
@@ -18,9 +18,11 @@ import './src/i18n'
 import { useTranslation } from 'react-i18next'
 import api from './src/api'
 import MedicinesScreen from './MedicinesScreen'
+import ReminderCenter from './src/ReminderCenter'
+import { activateReminderAccount, pauseReminderAccount, reminderIdFromUrl } from './src/reminderAlarm'
 import DiabetesNotificationsScreen from './src/DiabetesNotificationsScreen'
-import { saveToken, getToken, clearToken } from './src/auth'
-import { startNotificationListening, stopNotificationListening, setupNotificationResponseHandler } from './src/notifications'
+import { saveToken, getToken, clearToken, normalizeFullName, validateRegistration } from './src/auth'
+import { startNotificationListening, stopNotificationListening, setupNotificationResponseHandler, cancelAccountScheduledNotifications } from './src/notifications'
 import MealPlanScreen from './src/MealPlanScreen'
 import ProgressScreen from './src/ProgressScreen'
 import MessagesScreen from './src/MessagesScreen'
@@ -79,7 +81,7 @@ SplashScreen.preventAutoHideAsync().catch(err => {
 });
 
 export default function App() {
-  return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
+  return <SafeAreaProvider><AppContent /><ReminderCenter /></SafeAreaProvider>;
 }
 
 function AppContent() {
@@ -148,6 +150,7 @@ function AppContent() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
+  const [authError, setAuthError] = useState('')
   const [profile, setProfile] = useState(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -343,6 +346,7 @@ function AppContent() {
 
   // Handle deep link from OAuth callback
   async function handleDeepLink(event) {
+    if (reminderIdFromUrl(event.url)) return;
     console.log('=== HANDLE DEEP LINK TRIGGERED ===');
     console.log('Deep link received:', event.url);
     const url = event.url;
@@ -437,7 +441,6 @@ function AppContent() {
 
     // Setup notification response handler
     const unsubscribeNotificationResponse = setupNotificationResponseHandler((data) => {
-      console.log('[App] Notification tapped:', data);
       if (data.type === 'message') {
         // Navegar a la pantalla de mensajes
         // La lista de conversaciones mostrará unread_count para guiar al usuario
@@ -469,6 +472,13 @@ function AppContent() {
       };
 
         setProfile(enhancedProfile)
+        if (enhancedProfile.user_id != null) {
+          try {
+            await activateReminderAccount(enhancedProfile.user_id);
+          } catch (e) {
+            console.warn('No se pudo activar los recordatorios de la cuenta:', e);
+          }
+        }
         if (!enhancedProfile.contact_preference || (enhancedProfile.contact_preference === 'phone' && !enhancedProfile.phone)) {
           setView('required-contact')
         }
@@ -623,21 +633,32 @@ function AppContent() {
 
   async function handleLogin() {
     try {
+      setAuthError('')
       const res = await api.post('/login', { email, password });
       const tk = res.data.token;
       await completeLogin(tk, '¡Bienvenido!');
     } catch (e) {
       if (e.response?.status === 401) {
-        alert('Credenciales incorrectas');
+        setAuthError('Correo o contraseña incorrectos.');
       } else {
-        alert('Error al iniciar sesión');
+        setAuthError('No se pudo iniciar sesión. Revisa tu conexión.');
       }
     }
   }
 
   async function handleRegister(){
+    setAuthError('')
+    const validationError = validateRegistration({ name, email, password });
+    if (validationError) {
+      setAuthError(validationError);
+      return;
+    }
     try{
-      await api.post('/register',{ name, email, password })
+      await api.post('/register',{
+        name: normalizeFullName(name),
+        email: email.trim().toLowerCase(),
+        password,
+      })
       alert('Cuenta creada, ahora inicia sesión')
       setName('')
       setEmail('')
@@ -645,15 +666,25 @@ function AppContent() {
       setView('login')
     }catch(e){
       if(e.response?.status === 409){
-        alert('El correo ya está registrado')
+        setAuthError('El correo ya está registrado.')
       }else{
-        alert('Error al registrar')
+        setAuthError('No se pudo crear la cuenta. Revisa tus datos y la conexión.')
       }
     }
   }
 
   async function handleLogout(){
     stopNotificationListening();
+    try {
+      await cancelAccountScheduledNotifications();
+    } catch (e) {
+      console.warn('No se pudieron cancelar las notificaciones al cerrar sesión:', e);
+    }
+    try {
+      await pauseReminderAccount();
+    } catch (e) {
+      console.warn('No se pudo pausar los recordatorios al cerrar sesión:', e);
+    }
     await clearToken()
     setToken(null)
     setProfile(null)
@@ -759,11 +790,40 @@ function AppContent() {
     try {
       if (view === 'login') {
         return (
-          <View style={{flex: 1, justifyContent: 'center', padding: 20}}>
+          <KeyboardAvoidingView
+            style={{flex: 1}}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+          >
+          <ScrollView contentContainerStyle={{flexGrow: 1, justifyContent: 'flex-start', padding: 20, paddingBottom: 280}} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
             <Text style={styles.formTitle}>Iniciar Sesión</Text>
-            <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} />
-            <TextInput style={styles.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry />
-            <Button title="Login" onPress={handleLogin} />
+            {!!authError && <Text accessibilityRole="alert" style={styles.authError}>{authError}</Text>}
+            <Text style={styles.fieldLabel}>Correo electrónico</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="ejemplo@correo.com"
+              value={email}
+              onChangeText={setEmail}
+              accessibilityLabel="Correo electrónico"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={styles.fieldLabel}>Contraseña</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Tu contraseña"
+              value={password}
+              onChangeText={setPassword}
+              accessibilityLabel="Contraseña"
+              secureTextEntry
+              autoCapitalize="none"
+              textContentType="password"
+              returnKeyType="done"
+            />
+            <TouchableOpacity accessibilityRole="button" style={styles.authButton} onPress={handleLogin}>
+              <Text style={styles.authButtonText}>Iniciar sesión</Text>
+            </TouchableOpacity>
             <View style={{marginVertical: 20}}>
               <Text style={{textAlign: 'center', color: '#666', marginBottom: 10}}>O inicia sesión con:</Text>
               <TouchableOpacity 
@@ -791,19 +851,58 @@ function AppContent() {
               </TouchableOpacity>
             </View>
             <Button title="Volver" onPress={() => setView('home')} />
-          </View>
+          </ScrollView>
+          </KeyboardAvoidingView>
         );
       }
       if (view === 'register') {
         return (
-          <View style={{flex: 1, justifyContent: 'center', padding: 20}}>
+          <KeyboardAvoidingView
+            style={{flex: 1}}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+          >
+          <ScrollView contentContainerStyle={{flexGrow: 1, justifyContent: 'flex-start', padding: 20, paddingBottom: 280}} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
             <Text style={styles.formTitle}>Registrarse</Text>
-            <TextInput style={styles.input} placeholder="Nombre" value={name} onChangeText={setName} />
-            <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} />
-            <TextInput style={styles.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry />
-            <Button title="Register" onPress={handleRegister} />
+            <Text style={styles.authHint}>Crea una cuenta para guardar tu perfil y programar recordatorios.</Text>
+            {!!authError && <Text accessibilityRole="alert" style={styles.authError}>{authError}</Text>}
+            <Text style={styles.fieldLabel}>Nombre completo</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Ej. María López"
+              value={name}
+              onChangeText={setName}
+              accessibilityLabel="Nombre completo"
+              autoCapitalize="words"
+            />
+            <Text style={styles.fieldLabel}>Correo electrónico</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="ejemplo@correo.com"
+              value={email}
+              onChangeText={setEmail}
+              accessibilityLabel="Correo electrónico"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={styles.fieldLabel}>Contraseña (mínimo 8 caracteres)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Crea una contraseña"
+              value={password}
+              onChangeText={setPassword}
+              accessibilityLabel="Contraseña"
+              secureTextEntry
+              autoCapitalize="none"
+              textContentType="newPassword"
+            />
+            <TouchableOpacity accessibilityRole="button" style={styles.authButton} onPress={handleRegister}>
+              <Text style={styles.authButtonText}>Crear cuenta</Text>
+            </TouchableOpacity>
             <Button title="Volver" onPress={() => setView('home')} />
-          </View>
+          </ScrollView>
+          </KeyboardAvoidingView>
         );
       }
 
@@ -923,13 +1022,13 @@ function AppContent() {
                 <View style={{flexDirection: 'row', gap: 10, marginBottom: 14}}>
                   <TouchableOpacity
                     style={{flex: 1, backgroundColor: '#4CAF50', paddingVertical: 14, borderRadius: 10, alignItems: 'center'}}
-                    onPress={() => setView('login')}
+                    onPress={() => { setAuthError(''); setView('login'); }}
                   >
                     <Text style={{color: '#fff', fontSize: 16, fontWeight: '700'}}>{t('login') || 'Iniciar Sesión'}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={{flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.9)', paddingVertical: 14, borderRadius: 10, borderWidth: 1, borderColor: '#fff', alignItems: 'center'}}
-                    onPress={() => setView('register')}
+                    onPress={() => { setAuthError(''); setView('register'); }}
                   >
                     <Text style={{color: '#2d5016', fontSize: 16, fontWeight: '700'}}>{t('register') || 'Registrarse'}</Text>
                   </TouchableOpacity>
@@ -1048,6 +1147,9 @@ function AppContent() {
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('messages'); closeDrawer(); }}>
               <Text style={styles.navButtonText}>💬 Mensajes</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('gemini'); closeDrawer(); }}>
+              <Text style={styles.navButtonText}>✨ Gemini AI</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('settings'); closeDrawer(); }}>
               <Text style={styles.navButtonText}>⚙️ Ajustes</Text>
             </TouchableOpacity>
@@ -1101,6 +1203,40 @@ const styles = StyleSheet.create({
     marginBottom: 12, 
     backgroundColor: '#fff',
     fontSize: 16
+  },
+  fieldLabel: {
+    color: '#334155',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  authHint: {
+    color: '#64748b',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  authError: {
+    color: '#b91c1c',
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  authButton: {
+    backgroundColor: '#1d4ed8',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  authButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
   },
 
   heroSection: {

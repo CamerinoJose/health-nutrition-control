@@ -10,16 +10,18 @@ import {
   SafeAreaView,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
-
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import Constants from 'expo-constants';
+import api from './api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Clipboard from '@react-native-clipboard/clipboard';
 
 const GeminiChatScreen = ({ onNavigate, profile }) => {
+  const welcomeMessage = '¡Hola! Soy tu asistente de nutrición basado en IA. Puedo ayudarte con:\n\n• Consejos nutricionales\n• Recomendaciones de recetas\n• Información sobre alimentos\n• Planes de alimentación\n• Preguntas sobre salud\n\n¿En qué puedo ayudarte hoy?';
   const [messages, setMessages] = useState([
     {
       id: '1',
-      text: '¡Hola! Soy tu asistente de nutrición basado en IA. Puedo ayudarte con:\n\n• Consejos nutricionales\n• Recomendaciones de recetas\n• Información sobre alimentos\n• Planes de alimentación\n• Preguntas sobre salud\n\n¿En qué puedo ayudarte hoy?',
+      text: welcomeMessage,
       sender: 'bot',
       timestamp: new Date(),
     },
@@ -27,9 +29,30 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollViewRef = useRef();
-  // Use Constants.expoConfig.extra for Expo Go compatibility
-  const apiKey = Constants.expoConfig?.extra?.EXPO_PUBLIC_GEMINI_API_KEY || '';
-  const genAI = useRef(new GoogleGenerativeAI(apiKey)).current;
+  const historyKey = `bienestar_gemini_history_v1:${profile?.user_id || 'guest'}`;
+
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem(historyKey)
+      .then((raw) => {
+        if (!active || !raw) return;
+        const saved = JSON.parse(raw);
+        if (!Array.isArray(saved) || saved.length === 0) return;
+        setMessages(saved.map((message) => ({
+          ...message,
+          timestamp: new Date(message.timestamp),
+        })).filter((message) => message.timestamp instanceof Date && !Number.isNaN(message.timestamp.getTime())));
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [historyKey]);
+
+  useEffect(() => {
+    AsyncStorage.setItem(historyKey, JSON.stringify(messages.map((message) => ({
+      ...message,
+      timestamp: message.timestamp instanceof Date ? message.timestamp.toISOString() : new Date().toISOString(),
+    })))).catch(() => {});
+  }, [messages, historyKey]);
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -56,24 +79,14 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
     setLoading(true);
 
     try {
-      const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-
-      const systemPrompt = `Eres un asistente de nutrición amigable y experto. Ayudas a los usuarios con:
-- Consejos de nutrición y alimentación saludable
-- Información sobre alimentos y sus beneficios
-- Recomendaciones de recetas saludables
-- Planes de comidas personalizadas
-- Información sobre calorías, proteínas, vitaminas y minerales
-- Motivación para alcanzar objetivos de salud
-
-Responde siempre en español, de manera amigable y clara. Sé conciso pero informativo.
-Si el usuario es de ${profile?.name || 'un usuario'}, personaliza tus respuestas cuando sea apropiado.`;
-
-      const prompt = `${systemPrompt}\n\nUsuario: ${inputText}`;
-
-      const result = await model.generateContent(prompt);
-      const response = result.response;
-      const text = response.text();
+      const response = await api.post('/gemini/chat', {
+        message: inputText,
+        profileName: profile?.name || '',
+      });
+      const text = response.data?.text;
+      if (typeof text !== 'string' || !text.trim()) {
+        throw new Error('Empty response from assistant');
+      }
 
       const botMessage = {
         id: (Date.now() + 1).toString(),
@@ -85,10 +98,14 @@ Si el usuario es de ${profile?.name || 'un usuario'}, personaliza tus respuestas
       setMessages((prev) => [...prev, botMessage]);
       scrollToBottom();
     } catch (error) {
-      console.error('Error:', error);
+      console.error('Gemini chat request failed.');
+      const status = error?.response?.status;
+      const text = status === 503
+        ? '⚠️ El proveedor de IA está temporalmente ocupado. Intenta de nuevo en unos minutos.'
+        : '❌ Error al conectar con el asistente de IA. Por favor, intenta de nuevo.';
       const errorMessage = {
         id: (Date.now() + 1).toString(),
-        text: '❌ Error al conectar con Gemini. Por favor, intenta de nuevo.',
+        text,
         sender: 'bot',
         timestamp: new Date(),
       };
@@ -99,14 +116,32 @@ Si el usuario es de ${profile?.name || 'un usuario'}, personaliza tus respuestas
   };
 
   const clearChat = () => {
-    setMessages([
-      {
-        id: '1',
-        text: '¡Hola! Soy tu asistente de nutrición basado en IA. ¿En qué puedo ayudarte hoy?',
-        sender: 'bot',
-        timestamp: new Date(),
-      },
-    ]);
+    Alert.alert(
+      'Limpiar conversación',
+      'Se eliminará el historial de Gemini guardado en este dispositivo.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Limpiar',
+          style: 'destructive',
+          onPress: () => {
+            const welcome = [{
+              id: '1',
+              text: welcomeMessage,
+              sender: 'bot',
+              timestamp: new Date(),
+            }];
+            setMessages(welcome);
+            AsyncStorage.removeItem(historyKey).catch(() => {});
+          },
+        },
+      ],
+    );
+  };
+
+  const copyMessage = (text) => {
+    Clipboard.setString(text);
+    Alert.alert('Copiado', 'El texto quedó listo para pegar.');
   };
 
   return (
@@ -160,6 +195,16 @@ Si el usuario es de ${profile?.name || 'un usuario'}, personaliza tus respuestas
                       : styles.botBubble,
                   ]}
                 >
+                  {msg.sender === 'bot' && (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel="Copiar texto"
+                      style={styles.copyButton}
+                      onPress={() => copyMessage(msg.text)}
+                    >
+                      <Text style={styles.copyButtonText}>Copiar</Text>
+                    </TouchableOpacity>
+                  )}
                   <Text
                     style={[
                       styles.messageText,
@@ -315,6 +360,15 @@ const styles = StyleSheet.create({
   },
   botTimestamp: {
     color: '#999',
+  },
+  copyButton: {
+    alignSelf: 'flex-end',
+    marginBottom: 6,
+  },
+  copyButtonText: {
+    color: '#2563eb',
+    fontSize: 12,
+    fontWeight: '700',
   },
   loadingContainer: {
     alignItems: 'center',

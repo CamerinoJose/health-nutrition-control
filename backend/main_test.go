@@ -14,16 +14,11 @@ import (
 )
 
 func TestMedicineCreationAndListWithBooleanTaken(t *testing.T) {
-	t.Run("sqlite", func(t *testing.T) {
-		runMedicineEndpointTest(t, "sqlite", ":memory:", true)
-	})
-	t.Run("postgres", func(t *testing.T) {
-		dsn := os.Getenv("MEDICINES_TEST_POSTGRES_DSN")
-		if dsn == "" {
-			t.Skip("MEDICINES_TEST_POSTGRES_DSN is not set")
-		}
-		runMedicineEndpointTest(t, "postgres", dsn, false)
-	})
+	dsn := os.Getenv("MEDICINES_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("MEDICINES_TEST_POSTGRES_DSN is not set")
+	}
+	runMedicineEndpointTest(t, "postgres", dsn, false)
 }
 
 func runMedicineEndpointTest(t *testing.T, driver, dsn string, sqlite bool) {
@@ -39,11 +34,11 @@ func runMedicineEndpointTest(t *testing.T, driver, dsn string, sqlite bool) {
 		t.Fatal("could not connect to test database")
 	}
 
-	previousDB, previousSQLite, previousJWTKey := db, usingSQLite, jwtKey
-	db, usingSQLite, jwtKey = testDB, sqlite, []byte("medicine-test-secret")
+	previousDB, previousJWTKey := db, jwtKey
+	db, jwtKey = testDB, []byte("medicine-test-secret")
 	t.Cleanup(func() {
 		_ = testDB.Close()
-		db, usingSQLite, jwtKey = previousDB, previousSQLite, previousJWTKey
+		db, jwtKey = previousDB, previousJWTKey
 	})
 
 	idDefinition := "SERIAL PRIMARY KEY"
