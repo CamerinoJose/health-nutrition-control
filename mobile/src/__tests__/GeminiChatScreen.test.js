@@ -37,7 +37,6 @@ test('sends the prompt through the authenticated backend API', async () => {
   });
   expect(await screen.findByText('Una opción es avena con fruta.')).toBeTruthy();
 });
-
 test('shows a temporary-provider message for a 503 response', async () => {
   api.post.mockRejectedValue({ response: { status: 503 } });
   render(<GeminiChatScreen onNavigate={jest.fn()} profile={{ name: 'Ana' }} />);

@@ -1,17 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import api from './api';
 import './gemini.css';
-
-// Utility to list available Gemini models
-async function listGeminiModels(apiKey) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to list models: ${response.status} ${response.statusText}`);
-  }
-  const data = await response.json();
-  return data.models || [];
-}
 
 const GeminiChat = ({ onNavigate, profile }) => {
   const [messages, setMessages] = useState([
@@ -25,8 +14,6 @@ const GeminiChat = ({ onNavigate, profile }) => {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  const genAI = useRef(new GoogleGenerativeAI(apiKey)).current;
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -34,17 +21,7 @@ const GeminiChat = ({ onNavigate, profile }) => {
 
   useEffect(() => {
     scrollToBottom();
-    // List available Gemini models on mount
-    async function fetchModels() {
-      try {
-        const models = await listGeminiModels(apiKey);
-        console.log('Available Gemini models:', models);
-      } catch (err) {
-        console.error('Error listing Gemini models:', err);
-      }
-    }
-    if (apiKey) fetchModels();
-  }, [messages, apiKey]);
+  }, [messages]);
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
@@ -84,26 +61,14 @@ const GeminiChat = ({ onNavigate, profile }) => {
     setLoading(true);
 
     try {
-      // Use a supported Gemini model name
-      const model = genAI.getGenerativeModel({ model: 'models/gemini-2.5-pro' });
-      // or try 'models/gemini-pro-latest' if you want the latest stable
-
-      const systemPrompt = `Eres un asistente de nutrición amigable y experto. Ayudas a los usuarios con:
-- Consejos de nutrición y alimentación saludable
-- Información sobre alimentos y sus beneficios
-- Recomendaciones de recetas saludables
-- Planes de comidas personalizadas
-- Información sobre calorías, proteínas, vitaminas y minerales
-- Motivación para alcanzar objetivos de salud
-
-Responde siempre en español, de manera amigable y clara. Sé conciso pero informativo.
-Si el usuario es de ${profile?.name || 'un usuario'}, personaliza tus respuestas cuando sea apropiado.`;
-
-      const prompt = `${systemPrompt}\n\nUsuario: ${inputText}`;
-
-      const result = await model.generateContent(prompt);
-      const response = result.response;
-      const text = response.text();
+      const response = await api.post('/gemini/chat', {
+        message: inputText,
+        profileName: profile?.name || '',
+      });
+      const text = response.data?.text;
+      if (typeof text !== 'string' || !text.trim()) {
+        throw new Error('Empty response from assistant');
+      }
 
       const botMessage = {
         id: (Date.now() + 1).toString(),
@@ -114,11 +79,11 @@ Si el usuario es de ${profile?.name || 'un usuario'}, personaliza tus respuestas
 
       setMessages((prev) => [...prev, botMessage]);
       scrollToBottom();
-    } catch (error) {
-      console.error('Error:', error);
+    } catch {
+      console.error('Gemini chat request failed.');
       const errorMessage = {
         id: (Date.now() + 1).toString(),
-        text: '❌ Error al conectar con Gemini. Por favor, intenta de nuevo.',
+        text: '❌ Error al conectar con el asistente de IA. Por favor, intenta de nuevo.',
         sender: 'bot',
         timestamp: new Date(),
       };

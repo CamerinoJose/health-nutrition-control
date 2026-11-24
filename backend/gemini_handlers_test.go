@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -173,6 +174,38 @@ func TestHandleGeminiChatRetriesTemporaryUnavailable(t *testing.T) {
 	}
 	if attempts != 3 {
 		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestGenerateGeminiResponseReportsStatusWithoutProviderDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "secret provider details", http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	_, err := generateGeminiResponse(context.Background(), server.Client(), "test-key", "test-model", server.URL, geminiChatRequest{Message: "hello"})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 429") {
+		t.Fatalf("expected upstream status in error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "test-key") {
+		t.Fatal("error exposed sensitive details")
+	}
+}
+
+func TestGeminiErrorReasonOnlyReportsKnownCategories(t *testing.T) {
+	tests := []struct {
+		body string
+		want string
+	}{
+		{`{"error":{"details":[{"reason":"SERVICE_DISABLED","metadata":{"secret":"do-not-log"}}]}}`, "SERVICE_DISABLED"},
+		{`{"error":{"message":"Your API key was reported as leaked. Please use another API key."}}`, "API_KEY_REPORTED_LEAKED"},
+		{`{"error":{"message":"sensitive message","details":[{"reason":"sensitive value"}]}}`, "unavailable"},
+		{`not-json`, "unavailable"},
+	}
+	for _, test := range tests {
+		if got := geminiErrorReason(strings.NewReader(test.body)); got != test.want {
+			t.Errorf("reason = %q, want %q", got, test.want)
+		}
 	}
 }
 

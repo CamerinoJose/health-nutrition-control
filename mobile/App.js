@@ -145,7 +145,7 @@ function AppContent() {
   const skipNotifications = isExpoGo && isAndroid
   const [appIsReady, setAppIsReady] = useState(false);
   const [token, setToken] = useState(null)
-  const [view, setView] = useState('home') // home | login | register | dashboard | mealplan | progress | achievements | recipes | appointments | messages | support | settings
+  const [view, setView] = useState('home') // home | login | register | dashboard | mealplan | progress | achievements | recipes | appointments | messages | support | settings | gemini
   const [postLoginTarget, setPostLoginTarget] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -245,14 +245,10 @@ function AppContent() {
         return;
       }
 
-      console.log('Browser closed, polling backend for token...');
-      const token = await pollForToken();
-      
-      if (token) {
-        authHandledRef.current = true;
-        await completeLogin(token, '¡Bienvenido con Google!');
-      } else {
-        console.log('No token from backend, will wait for deep link...');
+      if (!authHandledRef.current && result.type === 'success' && result.url) {
+        await handleDeepLink({ url: result.url });
+      } else if (!authHandledRef.current) {
+        alert('No se pudo completar el inicio de sesión con Google. Inténtalo de nuevo.');
       }
       
     } catch (e) {
@@ -263,8 +259,6 @@ function AppContent() {
 
   function extractAccessToken(url) {
     try {
-      console.log('Extracting token from URL:', url);
-      
       // Try to parse as URL
       try {
         const urlObj = new URL(url);
@@ -272,7 +266,6 @@ function AppContent() {
         // Intentar obtener de hash (#token=...)
         const hash = url.split('#')[1];
         if (hash) {
-          console.log('Hash found:', hash);
           const params = new URLSearchParams(hash);
           const token = params.get('access_token') || params.get('token');
           if (token) {
@@ -289,9 +282,8 @@ function AppContent() {
         }
         
         console.log('No token found in parsed URL');
-        console.log('URL params:', Array.from(urlObj.searchParams.entries()));
-      } catch (parseErr) {
-        console.log('Could not parse as URL, trying string split:', parseErr.message);
+      } catch {
+        console.log('Could not parse URL, trying string split');
         
         // Fallback: try manual parsing
         if (url.includes('?token=')) {
@@ -306,8 +298,8 @@ function AppContent() {
       
       console.log('No token found in URL');
       return null;
-    } catch (err) {
-      console.warn('Error parsing token from url', url, err);
+    } catch {
+      console.warn('Error parsing token from URL');
       return null;
     }
   }
@@ -348,7 +340,6 @@ function AppContent() {
   async function handleDeepLink(event) {
     if (reminderIdFromUrl(event.url)) return;
     console.log('=== HANDLE DEEP LINK TRIGGERED ===');
-    console.log('Deep link received:', event.url);
     const url = event.url;
     
     // Check for token in URL FIRST
@@ -407,7 +398,6 @@ function AppContent() {
         // Check for initial URL from cold start
         const initialUrl = await Linking.getInitialURL();
         if (initialUrl != null) {
-          console.log('Initial URL from cold start:', initialUrl);
           const token = extractAccessToken(initialUrl);
           if (token) {
             await saveToken(token);
@@ -608,27 +598,6 @@ function AppContent() {
     } finally {
       setRefreshing(false);
     }
-  }
-
-  async function pollForToken(maxAttempts = 10) {
-    console.log('Polling backend for token...');
-    for (let i = 0; i < maxAttempts; i++) {
-      try {
-        const response = await api.get('/auth/last-token');
-        if (response.data && response.data.token) {
-          console.log('Token found! Attempt:', i + 1);
-          return response.data.token;
-        }
-      } catch (e) {
-        // Token not ready yet, continue polling
-        console.log('Poll attempt', i + 1, '- no token yet');
-      }
-      
-      // Wait before next attempt
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    console.log('No token found after', maxAttempts, 'attempts');
-    return null;
   }
 
   async function handleLogin() {

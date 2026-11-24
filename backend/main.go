@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,12 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func safeRequestLogFormatter(param gin.LogFormatterParams) string {
+	return fmt.Sprintf("[GIN] %s | %3d | %13v | %15s | %-7s %q\n",
+		param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+		param.StatusCode, param.Latency, param.ClientIP, param.Method, param.Request.URL.Path)
 }
 
 // Simple password reset for test users (no email verification)
@@ -343,7 +350,12 @@ func main() {
 	// Start a goroutine to check for upcoming appointments and send reminders
 	go appointmentReminderWorker()
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.LoggerWithFormatter(safeRequestLogFormatter))
+	r.Use(gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, _ any) {
+		log.Printf("HTTP handler panic: %s %s\n%s", c.Request.Method, c.FullPath(), debug.Stack())
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
 	_ = r.SetTrustedProxies([]string{"127.0.0.1"})
 
 	// Middleware para asegurar UTF-8 en todas las respuestas
@@ -407,17 +419,7 @@ func main() {
 		api.POST("/login", loginHandler)
 		api.POST("/reset-password", resetPasswordHandler)
 
-		// OAuth routes
-		api.GET("/auth/google", oauthInitHandler("google"))
-		api.GET("/auth/google/callback", oauthCallbackHandler("google"))
-		api.GET("/auth/google/success", oauthSuccessHandler)
-		api.GET("/auth/last-token", getLastOAuthTokenHandler)
-		api.GET("/auth/facebook", oauthInitHandler("facebook"))
-		api.GET("/auth/facebook/callback", oauthCallbackHandler("facebook"))
-		api.GET("/auth/facebook/success", oauthSuccessHandler)
-		api.GET("/auth/github", oauthInitHandler("github"))
-		api.GET("/auth/github/callback", oauthCallbackHandler("github"))
-		api.GET("/auth/github/success", oauthSuccessHandler)
+		registerOAuthRoutes(api)
 
 		auth := api.Group("")
 		auth.Use(authMiddleware())
