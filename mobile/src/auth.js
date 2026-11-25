@@ -9,6 +9,18 @@ export async function getToken(){
 }
 export async function clearToken(){
   await AsyncStorage.removeItem(TOKEN_KEY)
+  await AsyncStorage.removeItem(ACTIVE_ACCOUNT_KEY)
+}
+
+const ACTIVE_ACCOUNT_KEY = 'bienestar_active_account_id'
+
+export async function saveActiveAccountId(accountId) {
+  if (accountId == null) return
+  await AsyncStorage.setItem(ACTIVE_ACCOUNT_KEY, String(accountId))
+}
+
+export async function getActiveAccountId() {
+  return await AsyncStorage.getItem(ACTIVE_ACCOUNT_KEY)
 }
 
 export async function saveContactProfile(profile) {

@@ -11,6 +11,7 @@ function addLog(msg) {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform, LogBox, KeyboardAvoidingView } from 'react-native'
 import Constants from 'expo-constants'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as WebBrowser from 'expo-web-browser'
 import * as SplashScreen from 'expo-splash-screen'
 import * as Linking from 'expo-linking'
@@ -21,7 +22,7 @@ import MedicinesScreen from './MedicinesScreen'
 import ReminderCenter from './src/ReminderCenter'
 import { activateReminderAccount, pauseReminderAccount, reminderIdFromUrl } from './src/reminderAlarm'
 import DiabetesNotificationsScreen from './src/DiabetesNotificationsScreen'
-import { saveToken, getToken, clearToken, normalizeFullName, validateRegistration } from './src/auth'
+import { saveToken, getToken, clearToken, normalizeFullName, validateRegistration, saveActiveAccountId } from './src/auth'
 import { startNotificationListening, stopNotificationListening, setupNotificationResponseHandler, cancelAccountScheduledNotifications } from './src/notifications'
 import MealPlanScreen from './src/MealPlanScreen'
 import ProgressScreen from './src/ProgressScreen'
@@ -463,6 +464,7 @@ function AppContent() {
 
         setProfile(enhancedProfile)
         if (enhancedProfile.user_id != null) {
+          await saveActiveAccountId(enhancedProfile.user_id)
           try {
             await activateReminderAccount(enhancedProfile.user_id);
           } catch (e) {
@@ -481,7 +483,7 @@ function AppContent() {
           }
 
         // Load today's meals after profile is loaded
-        await loadTodayMeals(tk);
+        await loadTodayMeals(tk, enhancedProfile.user_id);
         // Load upcoming appointments summary
         await loadUpcomingAppointments(tk);
         return enhancedProfile;
@@ -491,7 +493,7 @@ function AppContent() {
     }
   }
 
-  async function loadTodayMeals(tk) {
+  async function loadTodayMeals(tk, accountId) {
     try {
       setLoadingMeals(true);
       const today = new Date();
@@ -513,6 +515,12 @@ function AppContent() {
       const response = await api.get('/meal-plan', {
         headers: { Authorization: `Bearer ${tk}` }
       });
+      if (accountId != null) {
+        await AsyncStorage.setItem(
+          `bienestar_meal_plan_v1:${String(accountId)}`,
+          JSON.stringify(response.data),
+        );
+      }
       
       const { meals } = response.data;
       
@@ -536,6 +544,27 @@ function AppContent() {
       setDisplayedDay(effectiveDay);
     } catch (error) {
       console.warn('[LoadTodayMeals] Error:', error.message);
+      try {
+        if (accountId != null) {
+          const raw = await AsyncStorage.getItem(`bienestar_meal_plan_v1:${String(accountId)}`);
+          if (raw) {
+            const cached = JSON.parse(raw);
+            const meals = Array.isArray(cached?.meals) ? cached.meals : [];
+            const today = new Date();
+            const spanishDays = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+            const spanishDayName = spanishDays[today.getDay()];
+            let todaysMeals = meals.filter(m => m.day_of_week === spanishDayName);
+            let effectiveDay = spanishDayName;
+            if (todaysMeals.length === 0 && meals.length > 0) {
+              effectiveDay = meals[0].day_of_week;
+              todaysMeals = meals.filter(m => m.day_of_week === effectiveDay);
+            }
+            setTodayMeals(todaysMeals);
+            setDisplayedDay(effectiveDay);
+            return;
+          }
+        }
+      } catch (_) {}
       setTodayMeals([]);
       setDisplayedDay('');
     } finally {
@@ -590,7 +619,7 @@ function AppContent() {
     try {
       await refreshProfile();
       if (token) {
-        await loadTodayMeals(token);
+        await loadTodayMeals(token, profile?.user_id);
         await loadUpcomingAppointments(token);
       }
     } catch (e) {

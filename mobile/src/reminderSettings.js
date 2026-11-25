@@ -31,9 +31,16 @@ export function normalizeReminderSettings(input) {
   };
 }
 
-export async function loadReminderSettings() {
+export async function loadReminderSettings(accountId) {
   try {
-    const raw = await AsyncStorage.getItem(REMINDER_SETTINGS_STORAGE_KEY);
+    const key = accountId
+      ? `${REMINDER_SETTINGS_STORAGE_KEY}:${String(accountId)}`
+      : REMINDER_SETTINGS_STORAGE_KEY;
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw && accountId) {
+      const legacy = await AsyncStorage.getItem(REMINDER_SETTINGS_STORAGE_KEY);
+      if (legacy) return normalizeReminderSettings(JSON.parse(legacy));
+    }
     if (!raw) return { ...DEFAULT_REMINDER_SETTINGS };
     const parsed = JSON.parse(raw);
     return normalizeReminderSettings(parsed);
@@ -42,10 +49,13 @@ export async function loadReminderSettings() {
   }
 }
 
-export async function saveReminderSettings(settings) {
+export async function saveReminderSettings(settings, accountId) {
   const normalized = normalizeReminderSettings(settings);
   try {
-    await AsyncStorage.setItem(REMINDER_SETTINGS_STORAGE_KEY, JSON.stringify(normalized));
+    const key = accountId
+      ? `${REMINDER_SETTINGS_STORAGE_KEY}:${String(accountId)}`
+      : REMINDER_SETTINGS_STORAGE_KEY;
+    await AsyncStorage.setItem(key, JSON.stringify(normalized));
   } catch (_) {
     // ignore
   }

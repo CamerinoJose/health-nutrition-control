@@ -20,8 +20,10 @@ import api from './api';
 import { DEFAULT_MEAL_TIMES, loadMealTimes, saveMealTimes, normalizeMealTimes } from './mealTimes';
 import { DEFAULT_REMINDER_SETTINGS, loadReminderSettings, saveReminderSettings, normalizeReminderSettings } from './reminderSettings';
 import { setupDiabetesNotifications } from './diabetesNotifications';
+import { getActiveAccountId } from './auth';
 
 const MEAL_REMINDER_IDS_KEY = 'bienestar_meal_reminder_ids_v1';
+const PENDING_MEAL_SETTINGS_KEY = 'bienestar_pending_meal_settings_v1';
 
 function isValidHHMM(str) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(str || ''));
@@ -74,8 +76,20 @@ export default function MealPlanScreen({ onNavigate }) {
   useEffect(() => {
     let isMounted = true;
     (async () => {
-      const saved = await loadMealTimes();
-      const savedReminderSettings = await loadReminderSettings();
+      try {
+        const accountId = await getActiveAccountId();
+        const pendingRaw = await AsyncStorage.getItem(PENDING_MEAL_SETTINGS_KEY);
+        if (pendingRaw) {
+          const pending = JSON.parse(pendingRaw);
+          if (!pending.accountId || String(pending.accountId) === String(accountId)) {
+            await api.put('/settings', pending.payload);
+            await AsyncStorage.removeItem(PENDING_MEAL_SETTINGS_KEY);
+          }
+        }
+      } catch (_) {}
+      const accountId = await getActiveAccountId();
+      const saved = await loadMealTimes(accountId);
+      const savedReminderSettings = await loadReminderSettings(accountId);
       if (!isMounted) return;
       setMealTimes(saved);
       setMealTimesDraft(saved);
@@ -90,7 +104,7 @@ export default function MealPlanScreen({ onNavigate }) {
       const serverReminderSettings = res?.data?.reminder_settings;
       if (serverMealTimes && typeof serverMealTimes === 'object') {
         const normalized = normalizeMealTimes(serverMealTimes);
-        await saveMealTimes(normalized);
+        await saveMealTimes(normalized, accountId);
         if (!isMounted) return;
         setMealTimes(normalized);
         setMealTimesDraft(normalized);
@@ -98,7 +112,7 @@ export default function MealPlanScreen({ onNavigate }) {
       }
       if (serverReminderSettings && typeof serverReminderSettings === 'object') {
         const normalizedRS = normalizeReminderSettings(serverReminderSettings);
-        await saveReminderSettings(normalizedRS);
+        await saveReminderSettings(normalizedRS, accountId);
         if (!isMounted) return;
         setReminderSettings(normalizedRS);
         setReminderSettingsDraft(normalizedRS);
@@ -203,26 +217,43 @@ export default function MealPlanScreen({ onNavigate }) {
   }
 
   async function saveMealTimesFromModal() {
-    const saved = await saveMealTimes(mealTimesDraft);
-    const savedRS = await saveReminderSettings(reminderSettingsDraft);
+    const accountId = await getActiveAccountId();
+    const saved = await saveMealTimes(mealTimesDraft, accountId);
+    const savedRS = await saveReminderSettings(reminderSettingsDraft, accountId);
     setMealTimes(saved);
     setMealTimesDraft(saved);
     setReminderSettings(savedRS);
     setReminderSettingsDraft(savedRS);
     setShowMealTimesModal(false);
 
-    // Best-effort: persist to server, preserving other fields
+    let synced = false;
     try {
       const current = await api.get('/settings');
       const enableReminders = !!current?.data?.enable_reminders;
-      await api.put('/settings', {
+      const payload = {
         meal_times: saved,
         reminder_settings: savedRS,
         enable_reminders: enableReminders,
-      });
+      };
+      await api.put('/settings', payload);
+      await AsyncStorage.removeItem(PENDING_MEAL_SETTINGS_KEY);
+      synced = true;
     } catch (_) {
-      // ignore (offline)
+      const accountId = await getActiveAccountId();
+      await AsyncStorage.setItem(PENDING_MEAL_SETTINGS_KEY, JSON.stringify({
+        accountId,
+        payload: {
+          meal_times: saved,
+          reminder_settings: savedRS,
+        },
+      }));
     }
+    Alert.alert(
+      synced ? '✅ Guardado' : 'Guardado en el dispositivo',
+      synced
+        ? 'Los horarios se guardaron y sincronizaron.'
+        : 'Sin conexión. Se sincronizarán automáticamente al volver la conexión.',
+    );
   }
 
   async function saveAndScheduleDiabetesFromModal() {
@@ -242,14 +273,15 @@ export default function MealPlanScreen({ onNavigate }) {
         return;
       }
 
-      const savedTimes = await saveMealTimes(mealTimesDraft);
-      const savedRS = await saveReminderSettings(reminderSettingsDraft);
+      const accountId = await getActiveAccountId();
+      const savedTimes = await saveMealTimes(mealTimesDraft, accountId);
+      const savedRS = await saveReminderSettings(reminderSettingsDraft, accountId);
       setMealTimes(savedTimes);
       setMealTimesDraft(savedTimes);
       setReminderSettings(savedRS);
       setReminderSettingsDraft(savedRS);
 
-      // Best-effort: persist to server
+      let settingsSynced = false;
       try {
         const current = await api.get('/settings');
         const enableReminders = !!current?.data?.enable_reminders;
@@ -258,8 +290,17 @@ export default function MealPlanScreen({ onNavigate }) {
           reminder_settings: savedRS,
           enable_reminders: enableReminders,
         });
+        settingsSynced = true;
+        await AsyncStorage.removeItem(PENDING_MEAL_SETTINGS_KEY);
       } catch (_) {
-        // ignore
+        const accountId = await getActiveAccountId();
+        await AsyncStorage.setItem(PENDING_MEAL_SETTINGS_KEY, JSON.stringify({
+          accountId,
+          payload: {
+            meal_times: savedTimes,
+            reminder_settings: savedRS,
+          },
+        }));
       }
 
       const ok = await setupDiabetesNotifications({
@@ -272,7 +313,12 @@ export default function MealPlanScreen({ onNavigate }) {
       });
 
       if (ok) {
-        Alert.alert('✅ Listo', 'Notificaciones de diabetes programadas.');
+        Alert.alert(
+          '✅ Listo',
+          settingsSynced
+            ? 'Horarios y notificaciones de diabetes guardados.'
+            : 'Notificaciones programadas. Los horarios quedaron pendientes de sincronizar.',
+        );
         setShowMealTimesModal(false);
       } else {
         Alert.alert('Error', 'No se pudieron programar las notificaciones de diabetes.');
@@ -326,16 +372,30 @@ export default function MealPlanScreen({ onNavigate }) {
   };
 
   const loadMealPlan = async () => {
+    const accountId = await getActiveAccountId();
+    const cacheKey = accountId
+      ? `bienestar_meal_plan_v1:${String(accountId)}`
+      : 'bienestar_meal_plan_v1';
     try {
       const response = await api.get('/meal-plan');
-      setPlan(response.data?.plan ?? null);
-      setMeals(Array.isArray(response.data?.meals) ? response.data.meals : []);
+      const data = response.data || {};
+      await AsyncStorage.setItem(cacheKey, JSON.stringify(data));
+      setPlan(data.plan ?? null);
+      setMeals(Array.isArray(data.meals) ? data.meals : []);
     } catch (error) {
       if (error.response?.status === 404) {
         setPlan(null);
         setMeals([]);
         return;
       }
+      try {
+        const raw = await AsyncStorage.getItem(cacheKey);
+        if (raw) {
+          const cached = JSON.parse(raw);
+          setPlan(cached?.plan ?? null);
+          setMeals(Array.isArray(cached?.meals) ? cached.meals : []);
+        }
+      } catch (_) {}
       console.error('Error loading meal plan:', error);
     } finally {
       setLoading(false);

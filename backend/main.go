@@ -2759,7 +2759,7 @@ func updateSettingsHandler(c *gin.Context) {
 	var req struct {
 		MealTimes        map[string]string `json:"meal_times"`
 		ReminderSettings any               `json:"reminder_settings"`
-		EnableReminders  bool              `json:"enable_reminders"`
+		EnableReminders  *bool             `json:"enable_reminders"`
 	}
 
 	if err := c.BindJSON(&req); err != nil {
@@ -2784,6 +2784,16 @@ func updateSettingsHandler(c *gin.Context) {
 		reminderSettingsJSON = string(b)
 	}
 
+	enableReminders := false
+	if req.EnableReminders != nil {
+		enableReminders = *req.EnableReminders
+	} else {
+		var current sql.NullBool
+		if err := queryRowDB(`SELECT enable_reminders FROM user_settings WHERE user_id = ?`, claims.UserID).Scan(&current); err == nil && current.Valid {
+			enableReminders = current.Bool
+		}
+	}
+
 	_, err = execDB(`
 		INSERT INTO user_settings (user_id, meal_times, reminder_settings, enable_reminders)
 		VALUES (?, ?, ?, ?)
@@ -2791,7 +2801,7 @@ func updateSettingsHandler(c *gin.Context) {
 			meal_times = excluded.meal_times,
 			reminder_settings = excluded.reminder_settings,
 			enable_reminders = excluded.enable_reminders
-	`, claims.UserID, string(mealTimesJSON), reminderSettingsJSON, req.EnableReminders)
+	`, claims.UserID, string(mealTimesJSON), reminderSettingsJSON, enableReminders)
 
 	if err != nil {
 		log.Printf("[Settings] Error saving: %v", err)

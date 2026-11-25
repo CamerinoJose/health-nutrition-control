@@ -20,9 +20,16 @@ export function normalizeMealTimes(input) {
   return { breakfast, lunch, dinner };
 }
 
-export async function loadMealTimes() {
+export async function loadMealTimes(accountId) {
   try {
-    const raw = await AsyncStorage.getItem(MEAL_TIMES_STORAGE_KEY);
+    const key = accountId
+      ? `${MEAL_TIMES_STORAGE_KEY}:${String(accountId)}`
+      : MEAL_TIMES_STORAGE_KEY;
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw && accountId) {
+      const legacy = await AsyncStorage.getItem(MEAL_TIMES_STORAGE_KEY);
+      if (legacy) return normalizeMealTimes(JSON.parse(legacy));
+    }
     if (!raw) return { ...DEFAULT_MEAL_TIMES };
     const parsed = JSON.parse(raw);
     return normalizeMealTimes(parsed);
@@ -31,10 +38,13 @@ export async function loadMealTimes() {
   }
 }
 
-export async function saveMealTimes(mealTimes) {
+export async function saveMealTimes(mealTimes, accountId) {
   try {
     const normalized = normalizeMealTimes(mealTimes);
-    await AsyncStorage.setItem(MEAL_TIMES_STORAGE_KEY, JSON.stringify(normalized));
+    const key = accountId
+      ? `${MEAL_TIMES_STORAGE_KEY}:${String(accountId)}`
+      : MEAL_TIMES_STORAGE_KEY;
+    await AsyncStorage.setItem(key, JSON.stringify(normalized));
     return normalized;
   } catch (_) {
     return normalizeMealTimes(mealTimes);
