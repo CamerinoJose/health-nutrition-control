@@ -14,6 +14,25 @@ export async function clearToken(){
 
 const ACTIVE_ACCOUNT_KEY = 'bienestar_active_account_id'
 
+export async function clearAccountLocalData(accountId) {
+  const keys = await AsyncStorage.getAllKeys();
+  const accountMarker = accountId == null ? null : `:${String(accountId)}`;
+  const accountKeys = accountMarker
+    ? keys.filter((key) => key.endsWith(accountMarker) || key.includes(`${accountMarker}:`))
+    : [];
+  const legacyKeys = [
+    'bienestar_health_profile_v1',
+    'bienestar_meal_times_v1',
+    'bienestar_reminder_settings_v1',
+    'bienestar_pending_meal_settings_v1',
+    'bienestar_medicine_notif_ids_v1',
+    'bienestar_diabetes_notif_ids_v1',
+    'bienestar_meal_reminder_ids_v1',
+    'diabetesNotificationConfig',
+  ];
+  await AsyncStorage.multiRemove([...new Set([...accountKeys, ...legacyKeys])]);
+}
+
 export async function saveActiveAccountId(accountId) {
   if (accountId == null) return
   await AsyncStorage.setItem(ACTIVE_ACCOUNT_KEY, String(accountId))

@@ -5,7 +5,7 @@ API REST en Go (Gin) con autenticación JWT y PostgreSQL para el seguimiento de 
 ## Inicio Rápido
 
 ### Requisitos Previos
-- Go 1.20+ instalado
+- Go 1.24.1+ instalado
 
 ### Instalación y Ejecución
 
@@ -13,11 +13,9 @@ API REST en Go (Gin) con autenticación JWT y PostgreSQL para el seguimiento de 
 # Descargar dependencias
 go mod tidy
 
-# Ejecutar el servidor (desarrollo con clave JWT por defecto)
+# Ejecutar el servidor con una clave aleatoria de al menos 32 bytes
+export JWT_SECRET="$(openssl rand -base64 32)"
 go run .
-
-# Ejecutar con JWT_SECRET personalizada (recomendado en producción)
-JWT_SECRET="tu-clave-secreta-fuerte-aqui" go run .
 ```
 
 El servidor iniciará en `http://localhost:8080`
@@ -26,14 +24,16 @@ El servidor iniciará en `http://localhost:8080`
 
 ### Variables de Entorno
 
-La aplicación lee la variable de entorno `JWT_SECRET` para firmar tokens JWT:
+La aplicación requiere una variable de entorno `JWT_SECRET` de al menos 32
+bytes para firmar tokens JWT. No arranca si falta o es demasiado corta:
 
 ```bash
-export JWT_SECRET="tu-clave-secreta-muy-fuerte-aqui"
+export JWT_SECRET="$(openssl rand -base64 32)"
 go run .
 ```
 
-Si no se configura, usará una clave de desarrollo (mostrará un warning).
+Genera un valor único y aleatorio para cada entorno; no reutilices una clave de
+desarrollo ni publiques el valor. Render debe conservar su valor generado.
 
 ### Gemini
 
@@ -41,9 +41,17 @@ Configura `GEMINI_API_KEY` únicamente en el entorno del backend. Los chats web 
 móvil envían sus mensajes al endpoint autenticado `/api/gemini/chat`; la clave no
 debe incluirse en `app.json`, variables `EXPO_PUBLIC_*` ni en el bundle del cliente.
 `GEMINI_MODEL` es opcional y por defecto usa `gemini-2.5-pro`.
+
 Si Google rechaza una solicitud, el registro del servidor indica su código HTTP
 y, cuando es reconocido, un motivo predefinido, sin registrar la clave ni el
 contenido de la respuesta.
+
+### Google OAuth
+
+Configura `GOOGLE_OAUTH_CLIENT_ID` y `GOOGLE_OAUTH_CLIENT_SECRET` en el backend.
+Registra en Google Cloud la URL de callback del backend:
+`https://<dominio-api>/api/auth/google/callback`. El backend construye esta URL
+dinámicamente usando el host y protocolo del proxy.
 
 El inicio de sesión móvil usa la redirección OAuth; no existe una ruta pública
 para consultar el último token. Las versiones antiguas que dependían de esa
@@ -67,6 +75,11 @@ CORS_ALLOW_ALL=1 go run .
 ```
 
 ## Base de Datos
+
+En Render, el backend necesita que el servicio tenga configuradas las variables
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_HOST` y
+`POSTGRES_SSLMODE=require` para conectarse a la base PostgreSQL existente. El
+blueprint de `render.yaml` no crea una base de datos.
 
 // ...existing code...
 - **Tablas**: `users` y `histories`

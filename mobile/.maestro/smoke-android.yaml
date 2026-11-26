@@ -1,0 +1,6 @@
+appId: com.bienestarappmobile
+---
+- launchApp
+- assertVisible: "BIENESTAR"
+- tapOn: "☰"
+- assertVisible: ".*Gemini AI.*"

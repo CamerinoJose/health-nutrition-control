@@ -21,8 +21,9 @@ services:
         generateValue: true  # Render will generate a secure random value
     healthCheckPath: /health
 
-# Nota: con SQLite en Render sin disco persistente, la base puede reiniciarse
-# en redeploy/restart. Para persistencia real, usar disco persistente o Postgres.
+# The backend requires POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB,
+# POSTGRES_HOST, and POSTGRES_SSLMODE to be configured on the existing Render
+# PostgreSQL service. This blueprint does not provision a database.
 
 # Frontend can be deployed separately to:
 # - Render Static Site

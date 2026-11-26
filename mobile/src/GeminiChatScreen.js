@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Modal,
 } from 'react-native';
 import api from './api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -28,6 +29,10 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
   ]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [reportMessage, setReportMessage] = useState(null);
+  const [reporting, setReporting] = useState(false);
+  const reportingRef = useRef(false);
   const scrollViewRef = useRef();
   const historyKey = `bienestar_gemini_history_v1:${profile?.user_id || 'guest'}`;
 
@@ -65,7 +70,7 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
   }, [messages]);
 
   const sendMessage = async () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || !consent || loading) return;
 
     const userMessage = {
       id: Date.now().toString(),
@@ -81,7 +86,6 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
     try {
       const response = await api.post('/gemini/chat', {
         message: inputText,
-        profileName: profile?.name || '',
       });
       const text = response.data?.text;
       if (typeof text !== 'string' || !text.trim()) {
@@ -107,6 +111,7 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
         id: (Date.now() + 1).toString(),
         text,
         sender: 'bot',
+        isError: true,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -142,6 +147,22 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
   const copyMessage = (text) => {
     Clipboard.setString(text);
     Alert.alert('Copiado', 'El texto quedó listo para pegar.');
+  };
+
+  const submitReport = async (reason) => {
+    if (reportingRef.current || !reportMessage) return;
+    reportingRef.current = true;
+    setReporting(true);
+    try {
+      await api.post('/gemini/reports', { responseText: reportMessage.text, reason });
+      setReportMessage(null);
+      Alert.alert('Reporte enviado', 'Gracias por ayudarnos a mejorar.');
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo enviar el reporte. Inténtalo de nuevo.');
+    } finally {
+      reportingRef.current = false;
+      setReporting(false);
+    }
   };
 
   return (
@@ -205,6 +226,20 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
                       <Text style={styles.copyButtonText}>Copiar</Text>
                     </TouchableOpacity>
                   )}
+                  {msg.sender === 'bot' && msg.text !== welcomeMessage && !msg.isError &&
+                    !msg.text.startsWith('⚠️ El proveedor de IA está temporalmente ocupado.') &&
+                    !msg.text.startsWith('❌ Error al conectar con el asistente de IA.') && (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel="Reportar respuesta"
+                      style={styles.copyButton}
+                      onPress={() => setReportMessage(msg)}
+                      disabled={reporting}
+                      accessibilityState={{ disabled: reporting }}
+                    >
+                      <Text style={styles.reportButtonText}>Reportar</Text>
+                    </TouchableOpacity>
+                  )}
                   <Text
                     style={[
                       styles.messageText,
@@ -240,6 +275,21 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
           )}
         </ScrollView>
 
+        <View style={styles.disclosureContainer}>
+          <Text style={styles.disclosureText}>
+            Tus mensajes se envían a Google Gemini. No incluyas datos que te identifiquen. Esta herramienta no proporciona atención médica.
+          </Text>
+          <TouchableOpacity
+            accessibilityRole="checkbox"
+            accessibilityLabel="Acepto enviar mis mensajes a Google Gemini"
+            accessibilityState={{ checked: consent }}
+            onPress={() => setConsent((previous) => !previous)}
+            style={styles.consentControl}
+          >
+            <Text style={styles.checkbox} accessible={false}>{consent ? '☑' : '☐'}</Text>
+            <Text style={styles.consentText}>Acepto enviar mis mensajes a Google Gemini</Text>
+          </TouchableOpacity>
+        </View>
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
@@ -252,14 +302,56 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
             editable={!loading}
           />
           <TouchableOpacity
-            style={[styles.sendButton, loading && styles.sendButtonDisabled]}
+            style={[styles.sendButton, (loading || !consent || !inputText.trim()) && styles.sendButtonDisabled]}
             onPress={sendMessage}
-            disabled={loading || !inputText.trim()}
+            disabled={loading || !consent || !inputText.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Enviar mensaje"
+            accessibilityState={{ disabled: loading || !consent || !inputText.trim() }}
           >
             <Text style={styles.sendButtonText}>➤</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+      <Modal
+        visible={!!reportMessage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { if (!reporting) setReportMessage(null); }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.reportDialog} accessibilityViewIsModal>
+            <Text style={styles.reportTitle}>¿Por qué quieres reportar esta respuesta?</Text>
+            {[
+              ['Consejo médico inseguro', 'unsafe_medical_advice'],
+              ['Contenido dañino', 'harmful'],
+              ['Privacidad', 'privacy'],
+              ['Otro', 'other'],
+            ].map(([label, reason]) => (
+              <TouchableOpacity
+                key={reason}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: reporting }}
+                disabled={reporting}
+                onPress={() => submitReport(reason)}
+                style={styles.reasonButton}
+              >
+                <Text style={styles.reasonText}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{ disabled: reporting }}
+              disabled={reporting}
+              onPress={() => setReportMessage(null)}
+              style={styles.reasonButton}
+            >
+              <Text style={styles.reasonText}>Cancelar</Text>
+            </TouchableOpacity>
+            {reporting && <ActivityIndicator accessibilityLabel="Enviando reporte" />}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -370,6 +462,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  reportButtonText: {
+    color: '#a12b24',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  reportDialog: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+  },
+  reportTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  reasonButton: {
+    paddingVertical: 14,
+  },
+  reasonText: {
+    color: '#333',
+    fontSize: 16,
+  },
   loadingContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -388,6 +509,34 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E0E0E0',
+  },
+  disclosureContainer: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#fff8e6',
+    borderTopWidth: 1,
+    borderTopColor: '#ead69b',
+  },
+  disclosureText: {
+    color: '#4d3b12',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  consentControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 44,
+  },
+  checkbox: {
+    fontSize: 22,
+    color: '#333',
+    marginRight: 8,
+  },
+  consentText: {
+    color: '#333',
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
   },
   input: {
     flex: 1,

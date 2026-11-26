@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getContactProfile,
+  clearAccountLocalData,
   normalizeFullName,
   saveContactProfile,
   validateRegistration,
@@ -48,4 +49,21 @@ test('contact profile is stored and loaded per account', async () => {
     phone: '8711180250',
     contact_preference: 'phone',
   });
+});
+
+test('account erasure clears current-account caches without removing other accounts', async () => {
+  jest.clearAllMocks();
+  AsyncStorage.getAllKeys.mockResolvedValueOnce([
+    'bienestar_gemini_history_v1:42',
+    'bienestar_health_profile_v1:42',
+    'bienestar_gemini_history_v1:420',
+  ]);
+
+  await clearAccountLocalData(42);
+
+  const removed = AsyncStorage.multiRemove.mock.calls[0][0];
+  expect(removed).toContain('bienestar_gemini_history_v1:42');
+  expect(removed).toContain('bienestar_health_profile_v1:42');
+  expect(removed).not.toContain('bienestar_gemini_history_v1:420');
+  expect(removed).toContain('bienestar_health_profile_v1');
 });

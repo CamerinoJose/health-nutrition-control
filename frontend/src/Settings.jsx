@@ -167,6 +167,13 @@ const Settings = ({ profile, onUpdate }) => {
           {saving ? t('saving') : `💾 ${t('saveSettings')}`}
         </button>
       </div>
+      <div className="settings-section">
+        <h3>Privacidad y cuenta</h3>
+        <p>Consulta cómo se usan tus datos o elimina tu cuenta de forma permanente.</p>
+        <a href="/privacy-policy.html" target="_blank" rel="noreferrer">Política de privacidad</a>
+        {' · '}
+        <a href="/?view=delete-account">Eliminar cuenta</a>
+      </div>
     </div>
   );
 };

@@ -106,13 +106,15 @@ type PushToken struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-func getJWTKey() []byte {
-	key := os.Getenv("JWT_SECRET")
+func getJWTKey() ([]byte, error) {
+	key := strings.TrimSpace(os.Getenv("JWT_SECRET"))
 	if key == "" {
-		log.Println("[WARNING] JWT_SECRET environment variable not set; using development fallback")
-		key = "desarrollo_clave_temporal_cambiar_en_produccion"
+		return nil, errors.New("JWT_SECRET must be set")
 	}
-	return []byte(key)
+	if len(key) < 32 {
+		return nil, errors.New("JWT_SECRET must contain at least 32 bytes")
+	}
+	return []byte(key), nil
 }
 
 func getenvOrDefault(key, fallback string) string {
@@ -283,7 +285,7 @@ func checkUpcomingAppointments() {
 			log.Printf("[Reminders] Error creating notification: %v", err)
 		} else {
 			count++
-			log.Printf("[Reminders] Created reminder for user %d, appointment %d", userID, aptID)
+			log.Printf("[Reminders] Created appointment reminder")
 		}
 	}
 
@@ -295,7 +297,11 @@ func checkUpcomingAppointments() {
 }
 
 func main() {
-	jwtKey = getJWTKey()
+	configuredJWTKey, err := getJWTKey()
+	if err != nil {
+		log.Fatal(err)
+	}
+	jwtKey = configuredJWTKey
 	pgUser := getenvOrDefault("POSTGRES_USER", "postgres")
 	pgPass := os.Getenv("POSTGRES_PASSWORD")
 	pgDB := getenvOrDefault("POSTGRES_DB", "bienestar")
@@ -303,8 +309,7 @@ func main() {
 	pgSSL := getenvOrDefault("POSTGRES_SSLMODE", "disable")
 	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=%s", pgUser, pgPass, pgDB, pgHost, pgSSL)
 
-	log.Printf("🐘 Connecting to PostgreSQL: %s@%s/%s", pgUser, pgHost, pgDB)
-	var err error
+	log.Printf("Connecting to PostgreSQL database")
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatalf("Error opening PostgreSQL: %v", err)
@@ -339,6 +344,9 @@ func main() {
 	if err := migrate(); err != nil {
 		log.Fatal(err)
 	}
+	if err := cleanupExpiredGeminiReports(); err != nil {
+		log.Fatal("Could not enforce Gemini report retention: ", err)
+	}
 
 	if err := seedRecipes(); err != nil {
 		log.Printf("Warning: Failed to seed recipes: %v", err)
@@ -350,6 +358,7 @@ func main() {
 
 	// Start a goroutine to check for upcoming appointments and send reminders
 	go appointmentReminderWorker()
+	go geminiReportRetentionWorker()
 
 	r := gin.New()
 	r.Use(gin.LoggerWithFormatter(safeRequestLogFormatter))
@@ -426,6 +435,7 @@ func main() {
 		auth.Use(authMiddleware())
 		{
 			auth.POST("/gemini/chat", geminiChatHandler)
+			auth.POST("/gemini/reports", createGeminiReportHandler)
 
 			// Medicines CRUD + daily history endpoints
 			auth.GET("/medicines", listMedicinesHandler)
@@ -504,6 +514,7 @@ func main() {
 
 			// ...existing code...
 			auth.GET("/me", meHandler)
+			auth.DELETE("/me", deleteOwnAccountHandler)
 			auth.PUT("/me/profile", updateProfileHandler)
 			auth.PUT("/me/contact", updateContactPhoneHandler)
 			auth.POST("/history", createHistoryHandler)
@@ -584,6 +595,8 @@ func main() {
 				admin.GET("/users/:id/history", userHistoryHandler)
 				admin.PUT("/users/:id/role", updateUserRoleHandler)
 				admin.DELETE("/users/:id", deleteUserHandler)
+				admin.GET("/gemini-reports", listGeminiReportsHandler)
+				admin.PUT("/gemini-reports/:id", updateGeminiReportHandler)
 				admin.GET("/export", exportDataHandler)
 			}
 		}
@@ -950,6 +963,19 @@ func migrate() error {
 		return auditErr
 	}
 
+	_, err := execDB(`CREATE TABLE IF NOT EXISTS gemini_reports (
+		id SERIAL PRIMARY KEY,
+		user_id INTEGER NOT NULL,
+		response_text TEXT NOT NULL,
+		reason TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY(user_id) REFERENCES users(id)
+	)`)
+	if err != nil {
+		return fmt.Errorf("Gemini report migration failed: %w", err)
+	}
+
 	log.Println("✅ Database migration completed successfully")
 	return nil
 }
@@ -995,8 +1021,6 @@ func loginHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[Login] Attempting login for: %s", req.Email)
-
 	var u User
 	row := queryRowDB(`SELECT id,name,email,password,role FROM users WHERE email = ?`, req.Email)
 	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role); err != nil {
@@ -1004,8 +1028,6 @@ func loginHandler(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "credenciales inválidas"})
 		return
 	}
-
-	log.Printf("[Login] User found: %s (ID: %d, Role: %s)", u.Name, u.ID, u.Role)
 
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(req.Password)); err != nil {
 		log.Printf("[Login] Password mismatch: %v", err)
@@ -1021,6 +1043,7 @@ func loginHandler(c *gin.Context) {
 		Role:   u.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
 
@@ -1144,14 +1167,14 @@ func updateContactPhoneHandler(c *gin.Context) {
 	query += ` WHERE id = ?`
 	args = append(args, claims.UserID)
 	if _, err := execDB(query, args...); err != nil {
-		log.Printf("[Contact] Error updating phone for user %d: %v", claims.UserID, err)
+		log.Printf("[Contact] Error updating phone: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo guardar el teléfono"})
 		return
 	}
 
 	var savedName string
 	if err := queryRowDB(`SELECT name FROM users WHERE id = ?`, claims.UserID).Scan(&savedName); err != nil {
-		log.Printf("[Contact] Error reading updated name for user %d: %v", claims.UserID, err)
+		log.Printf("[Contact] Error reading updated name: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudieron leer los datos actualizados"})
 		return
 	}
@@ -1179,8 +1202,6 @@ func createHistoryHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
 		return
 	}
-	log.Printf("[History] Saving data for user %d: date=%s, weight=%.2f, fat=%.2f, muscle=%.2f",
-		claims.UserID, req.Date, req.Weight, req.FatPercentage, req.MusclePercentage)
 	_, err := execDB(`INSERT INTO histories (user_id,date,weight,fat_percentage,muscle_percentage) VALUES (?,?,?,?,?)`,
 		claims.UserID, req.Date, req.Weight, req.FatPercentage, req.MusclePercentage)
 	if err != nil {
@@ -1188,7 +1209,6 @@ func createHistoryHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo guardar historial"})
 		return
 	}
-	log.Printf("[History] Data saved successfully for user %d", claims.UserID)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -1247,8 +1267,6 @@ func createHealthProfileHandler(c *gin.Context) {
 	profile.UserID = claims.UserID
 	profile.UpdatedAt = time.Now().Format(time.RFC3339)
 
-	log.Printf("[HealthProfile] Creating profile for user %d", claims.UserID)
-
 	_, err := execDB(`
 		INSERT INTO health_profiles (
 			user_id, age, sex, height, current_weight, goal_weight, waist_circumference,
@@ -1274,7 +1292,6 @@ func createHealthProfileHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[HealthProfile] Profile created successfully for user %d", claims.UserID)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Perfil de salud creado exitosamente"})
 }
 
@@ -1321,8 +1338,6 @@ func updateHealthProfileHandler(c *gin.Context) {
 
 	profile.UpdatedAt = time.Now().Format(time.RFC3339)
 
-	log.Printf("[HealthProfile] Updating profile for user %d", claims.UserID)
-
 	res, err := execDB(`
 		UPDATE health_profiles SET
 			age = ?, sex = ?, height = ?, current_weight = ?, goal_weight = ?,
@@ -1352,7 +1367,6 @@ func updateHealthProfileHandler(c *gin.Context) {
 		}
 	}
 
-	log.Printf("[HealthProfile] Profile updated successfully for user %d", claims.UserID)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Perfil actualizado exitosamente"})
 }
 
@@ -1441,6 +1455,21 @@ func authMiddleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "claims inválidos"})
 			return
 		}
+		if db != nil {
+			var userID int
+			err := queryRowDB(`SELECT id FROM users WHERE id = ?`, claims.UserID).Scan(&userID)
+			if errors.Is(err, sql.ErrNoRows) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error": "account no longer exists",
+					"code":  "account_deleted",
+				})
+				return
+			}
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "servicio no disponible"})
+				return
+			}
+		}
 		c.Set("claims", claims)
 		c.Next()
 	}
@@ -1449,40 +1478,32 @@ func authMiddleware() gin.HandlerFunc {
 // --- OCR Handler ---
 
 func ocrHandler(c *gin.Context) {
-	claims := c.MustGet("claims").(*Claims)
-
 	// Create uploads directory if it doesn't exist
 	os.MkdirAll("./uploads", 0755)
 
 	// Parse form with file
 	file, err := c.FormFile("image")
 	if err != nil {
-		log.Println("[OCR] No image file provided:", err)
+		log.Println("[OCR] No image file provided")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no image file provided"})
 		return
 	}
 
 	// Save uploaded file temporarily
-	filename := filepath.Join("./uploads", fmt.Sprintf("ocr_%d_%d.jpg", claims.UserID, time.Now().UnixNano()))
-	log.Println("[OCR] Saving uploaded file to", filename)
+	filename := filepath.Join("./uploads", fmt.Sprintf("ocr_%d.jpg", time.Now().UnixNano()))
 	if err := c.SaveUploadedFile(file, filename); err != nil {
-		log.Println("[OCR] Failed to save image:", err)
+		log.Println("[OCR] Failed to save uploaded image")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save image"})
 		return
 	}
-	log.Println("[OCR] Saved file successfully")
 	defer func() {
 		if err := os.Remove(filename); err != nil {
-			log.Println("[OCR] Failed to remove temp file:", err)
-		} else {
-			log.Println("[OCR] Temp file removed")
+			log.Println("[OCR] Failed to remove temporary upload")
 		}
 	}() // Clean up temp file
 
 	// Extract data from image using simple regex patterns
-	log.Println("[OCR] Running Tesseract on", filename)
 	result := extractDataFromImage(filename)
-	log.Printf("[OCR] Result: name=%s, height=%.1fcm, age=%d, sex=%s, weight=%.2f fat=%.2f muscle=%.2f confidence=%s", result.Name, result.Height, result.Age, result.Sex, result.Weight, result.FatPercentage, result.MusclePercentage, result.Confidence)
 
 	// Return extracted data
 	c.JSON(http.StatusOK, result)
@@ -1521,17 +1542,10 @@ func extractDataFromImage(imagePath string) OCRResult {
 	// Run Tesseract OCR
 	text, err := runTesseract(imagePath)
 	if err != nil {
-		log.Printf("Tesseract error: %v", err)
+		log.Println("Tesseract OCR failed")
 		result.Confidence = "tesseract_not_installed"
 		return result
 	}
-
-	// Log a snippet of the OCR text for debugging
-	snippet := text
-	if len(snippet) > 800 {
-		snippet = snippet[:800] + "..."
-	}
-	log.Println("[OCR] Raw text snippet:\n" + snippet)
 
 	// Parse extracted text for body composition data
 	result = parseBodyCompositionData(text)
@@ -1699,10 +1713,6 @@ func parseBodyCompositionData(text string) OCRResult {
 			}
 		}
 		if len(cands) > 0 {
-			log.Println("[OCR] KG candidates:")
-			for _, c := range cands {
-				log.Printf("[OCR]   %.2f kg | labeled=%v | line=%s", c.val, c.labeled, c.line)
-			}
 			pick := func(labeledOnly bool) (float64, bool) {
 				var best float64
 				found := false
@@ -1784,9 +1794,6 @@ func parseBodyCompositionData(text string) OCRResult {
 		res.MusclePercentage = muscle
 	}
 
-	log.Printf("OCR extracted: name=%s, height=%.1fcm, age=%d, sex=%s, weight=%.1f, fat=%.1f%%, muscle=%.1f%%, confidence=%s",
-		res.Name, res.Height, res.Age, res.Sex, res.Weight, res.FatPercentage, res.MusclePercentage, res.Confidence)
-
 	return res
 }
 
@@ -1819,7 +1826,7 @@ func auditAdminAction(c *gin.Context, action string, targetUserID interface{}) {
 		time.Now().UTC().Format(time.RFC3339),
 	)
 	if err != nil {
-		log.Printf("[AUDIT] failed to record action %q by admin %d: %v", action, claims.UserID, err)
+		log.Printf("[AUDIT] failed to record action %q: %v", action, err)
 	}
 }
 
@@ -2097,21 +2104,18 @@ func deleteUserHandler(c *gin.Context) {
 		return
 	}
 
-	// Start transaction-like behavior: delete related records first
-	_, err := execDB(`DELETE FROM histories WHERE user_id = ?`, userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user history"})
+	targetUserID, err := strconv.Atoi(userID)
+	if err != nil || targetUserID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
 		return
 	}
-
-	result, err := execDB(`DELETE FROM users WHERE id = ?`, userID)
+	deleted, err := deleteAccountData(c.Request.Context(), targetUserID)
 	if err != nil {
+		log.Printf("Admin account deletion failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user"})
 		return
 	}
-
-	rows, err := result.RowsAffected()
-	if err != nil || rows == 0 {
+	if !deleted {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
@@ -2131,14 +2135,17 @@ func uploadMealPlanHandler(c *gin.Context) {
 		return
 	}
 
-	tempPath := filepath.Join("./uploads", fmt.Sprintf("meal_plan_%d_%d.pdf", claims.UserID, time.Now().UnixNano()))
-	log.Printf("[MealPlan] Saving PDF to: %s", tempPath)
+	tempPath := filepath.Join("./uploads", fmt.Sprintf("meal_plan_%d.pdf", time.Now().UnixNano()))
 	if err := c.SaveUploadedFile(file, tempPath); err != nil {
-		log.Printf("[MealPlan] Failed to save PDF: %v", err)
+		log.Printf("[MealPlan] Failed to save uploaded PDF")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save PDF"})
 		return
 	}
-	defer os.Remove(tempPath)
+	defer func() {
+		if err := os.Remove(tempPath); err != nil {
+			log.Printf("[MealPlan] Failed to remove temporary upload")
+		}
+	}()
 
 	log.Printf("[MealPlan] Extracting meals from PDF...")
 	meals, snacksText, err := extractMealsFromPDF(tempPath)
@@ -2301,21 +2308,8 @@ func extractMealsFromPDF(pdfPath string) ([]PlanMeal, string, error) {
 		fullText += text + "\n"
 	}
 
-	log.Printf("[MealPlan] Extracted text length: %d characters", len(fullText))
-	if len(fullText) > 500 {
-		log.Printf("[MealPlan] First 500 chars: %s", fullText[:500])
-	} else {
-		log.Printf("[MealPlan] Full text: %s", fullText)
-	}
-
 	// Normalize fragmented text: remove excessive line breaks and join words
 	fullText = normalizeFragmentedText(fullText)
-	log.Printf("[MealPlan] After normalization: %d characters", len(fullText))
-	if len(fullText) > 1000 {
-		log.Printf("[MealPlan] First 1000 normalized chars: %s", fullText[:1000])
-	} else {
-		log.Printf("[MealPlan] Normalized text: %s", fullText)
-	}
 
 	meals, snacksText := parseMealPlanText(fullText)
 	log.Printf("[MealPlan] Parsed meals: %d", len(meals))
@@ -2546,8 +2540,6 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 					Preparation: before,
 				}
 				meals = append(meals, meal)
-				log.Printf("[MealPlan Parser] Saved meal: %s - %s - %s", meal.DayOfWeek, meal.MealType, meal.Name[:min(len(meal.Name), 30)])
-
 				// If snacks text was found, save it
 				if embeddedSnacks != "" && snacksText == "" {
 					snacksText = embeddedSnacks
@@ -2564,7 +2556,6 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 						Preparation: embeddedPrep,
 					}
 					meals = append(meals, embeddedMeal)
-					log.Printf("[MealPlan Parser] Saved embedded meal: %s - %s - %s", embeddedMeal.DayOfWeek, embeddedMeal.MealType, embeddedMeal.Name[:min(len(embeddedMeal.Name), 30)])
 					currentMealIndex++
 				}
 			} else {
@@ -2576,7 +2567,6 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 					Preparation: prepText,
 				}
 				meals = append(meals, meal)
-				log.Printf("[MealPlan Parser] Saved meal: %s - %s - %s", meal.DayOfWeek, meal.MealType, meal.Name[:min(len(meal.Name), 30)])
 				currentMealIndex++
 			}
 
@@ -2588,15 +2578,10 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 		}
 	}
 
-	for i, line := range lines {
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
-		}
-
-		// Debug: log each line being processed
-		if i < 15 {
-			log.Printf("[MealPlan Parser] Line %d: %s", i, line[:min(len(line), 80)])
 		}
 
 		if line == "Desayuno" || line == "Comida" || line == "Cena" || line == "Plan de al imentació n" {
@@ -2607,7 +2592,6 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 		for _, day := range days {
 			if strings.HasPrefix(line, day) {
 				saveMeal()
-				log.Printf("[MealPlan Parser] Line %d: Found day: %s", i, day)
 				currentDay = day
 				if currentDay == "Miercoles" {
 					currentDay = "Miércoles"
@@ -2621,7 +2605,6 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 				if remaining != "" {
 					mealName.Reset()
 					mealName.WriteString(remaining)
-					log.Printf("[MealPlan Parser] First meal name: %s", remaining[:min(len(remaining), 50)])
 				}
 				foundDay = true
 				break
@@ -2656,7 +2639,6 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 			mealName.WriteString(line)
 			inIngredients = false
 			inPreparation = false
-			log.Printf("[MealPlan Parser] New meal name: %s", line[:min(len(line), 50)])
 			continue
 		}
 
@@ -2700,7 +2682,6 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 							ingredients.WriteString(embeddedIngred)
 						}
 						// Continue processing rest of text for more embedded meals
-						log.Printf("[MealPlan Parser] Found embedded meal in prep: %s (remaining: %d chars)", embeddedName[:min(len(embeddedName), 50)], len(embeddedPrep))
 						remaining = embeddedPrep // Continue with prep text after this meal
 					} else {
 						// No more embedded meals, add remaining as preparation
@@ -2728,7 +2709,6 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 				mealName.WriteString(line)
 				inIngredients = false
 				inPreparation = false
-				log.Printf("[MealPlan Parser] New meal name in ingredients: %s", line[:min(len(line), 50)])
 			} else {
 				ingredients.WriteString(line)
 			}
@@ -2762,12 +2742,7 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 					preparation.WriteString(embeddedPrep)
 					inPreparation = true
 				}
-				log.Printf("[MealPlan Parser] Found embedded meal: %s", embeddedName[:min(len(embeddedName), 50)])
 			} else {
-				// Debug: log prep lines for Viernes/Sábado
-				if currentDay == "Viernes" || currentDay == "Sábado" {
-					log.Printf("[MealPlan Parser] %s prep line (no embed): %s", currentDay, line[:min(len(line), 80)])
-				}
 				if preparation.Len() > 0 {
 					preparation.WriteString(" ")
 				}
@@ -3244,7 +3219,7 @@ func ensureUserExists(email, name, password, role string) error {
 		return err
 	}
 
-	log.Printf("[Seed] Created %s account %s", role, email)
+	log.Printf("[Seed] Created %s account", role)
 	return nil
 }
 
@@ -3442,7 +3417,7 @@ func sendMessageHandler(c *gin.Context) {
 		log.Printf("[Messages] Warning: Failed to create notification: %v", err)
 		// Don't fail the message send if notification creation fails
 	} else {
-		log.Printf("[Messages] Notification created for user %d", input.RecipientID)
+		log.Printf("[Messages] Notification created")
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -3513,8 +3488,6 @@ func getMessagesHandler(c *gin.Context) {
 
 func getConversationsHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
-
-	log.Printf("[Messages] Getting conversations for user_id=%d", claims.UserID)
 
 	// Get unique conversation partners with their latest message info
 	rows, err := queryDB(`
@@ -3588,7 +3561,7 @@ func getConversationsHandler(c *gin.Context) {
 		})
 	}
 
-	log.Printf("[Messages] Found %d conversations for user_id=%d", len(conversations), claims.UserID)
+	log.Printf("[Messages] Found %d conversations", len(conversations))
 
 	// Always return an array (empty if no conversations), never nil
 	if conversations == nil {
@@ -3760,7 +3733,7 @@ func markNotificationAsReadHandler(c *gin.Context) {
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		log.Printf("[Notifications] No notification found with id=%s for user=%d", notificationID, claims.UserID)
+		log.Printf("[Notifications] No matching notification found")
 		c.JSON(http.StatusNotFound, gin.H{"error": "notification not found or doesn't belong to user"})
 		return
 	}
@@ -3815,7 +3788,7 @@ func registerPushTokenHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[PushToken] ✅ Token registered for user %d (%s)", claims.UserID, req.DeviceType)
+	log.Printf("[PushToken] Token registered")
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "push token registered"})
 }
 
@@ -3830,7 +3803,7 @@ func deletePushTokenHandler(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[PushToken] Token deleted for user %d", claims.UserID)
+	log.Printf("[PushToken] Token deleted")
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -3841,7 +3814,7 @@ func sendPushNotification(userID int, title, body string, data map[string]interf
 	err := queryRowDB(`SELECT token FROM push_tokens WHERE user_id = ? LIMIT 1`, userID).Scan(&token)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("[PushNotification] No token found for user %d", userID)
+			log.Printf("[PushNotification] No token found for recipient")
 			return nil // Not an error, user just doesn't have push enabled
 		}
 		return err
@@ -3883,11 +3856,11 @@ func sendPushNotification(userID int, title, body string, data map[string]interf
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[PushNotification] ⚠️ Expo API returned status %d for user %d", resp.StatusCode, userID)
+		log.Printf("[PushNotification] Expo API returned status %d", resp.StatusCode)
 		return fmt.Errorf("expo push API returned status %d", resp.StatusCode)
 	}
 
-	log.Printf("[PushNotification] ✅ Push notification sent to user %d: %s", userID, title)
+	log.Printf("[PushNotification] Push notification sent")
 	return nil
 }
 

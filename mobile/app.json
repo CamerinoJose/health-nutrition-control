@@ -14,7 +14,7 @@
     "icon": "./assets/Logo_p_bienestar.png",
     "android": {
       "package": "com.bienestarappmobile",
-      "versionCode": 5,
+      "versionCode": 9,
       "adaptiveIcon": {
         "foregroundImage": "./assets/Logo_p_bienestar.png",
         "backgroundColor": "#ffffff"
@@ -24,18 +24,6 @@
         "VIBRATE"
       ],
       "intentFilters": [
-        {
-          "action": "VIEW",
-          "data": {
-            "scheme": "exp",
-            "host": "192.168.100.27",
-            "pathPrefix": "/--/oauth-callback"
-          },
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
-        },
         {
           "action": "VIEW",
           "data": {

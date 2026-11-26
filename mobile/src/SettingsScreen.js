@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,18 +7,25 @@ import {
   StyleSheet,
   Switch,
   SafeAreaView,
-  Alert
+  Alert,
+  Modal,
+  TextInput,
+  Linking,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import * as Application from 'expo-application';
 import api from './api';
 
-export default function SettingsScreen({ onNavigate, onLogout, onRefreshProfile, profile }) {
+export default function SettingsScreen({ onNavigate, onLogout, onAccountDeleted, onRefreshProfile, profile }) {
   const { t, i18n } = useTranslation();
   const [settings, setSettings] = useState({
     enableReminders: false,
   });
   const [language, setLanguage] = useState(i18n.language);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [password, setPassword] = useState('');
+  const deletingRef = useRef(false);
 
   const toggleReminders = async (value) => {
     setSettings({ ...settings, enableReminders: value });
@@ -43,6 +50,52 @@ export default function SettingsScreen({ onNavigate, onLogout, onRefreshProfile,
   const handleLogout = () => {
     if (onLogout) {
       onLogout();
+    }
+  };
+
+  const deleteAccount = async () => {
+    if (deletingRef.current) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    try {
+      await api.delete('/me', { data: { password } });
+    } catch (error) {
+      Alert.alert(
+        'Error',
+        'No se pudo eliminar la cuenta. Verifica tu contraseña o inicia sesión de nuevo y vuelve a intentarlo.',
+      );
+      deletingRef.current = false;
+      setDeleting(false);
+      setDeleteModalVisible(false);
+      setPassword('');
+      return;
+    }
+    deletingRef.current = false;
+    setDeleting(false);
+    if (onAccountDeleted) {
+      onAccountDeleted();
+    } else if (onLogout) {
+      onLogout();
+    }
+  };
+
+  const confirmDeleteAccount = () => {
+    if (deletingRef.current) return;
+    Alert.alert(
+      'Eliminar cuenta',
+      '¿Quieres eliminar tu cuenta? Esta acción no se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Continuar', style: 'destructive', onPress: () => setDeleteModalVisible(true) },
+      ],
+    );
+  };
+
+  const openPrivacyPolicy = async () => {
+    try {
+      await Linking.openURL('https://health-nutrition-control-web.onrender.com/privacy-policy.html');
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo abrir la política de privacidad.');
     }
   };
 
@@ -128,6 +181,13 @@ export default function SettingsScreen({ onNavigate, onLogout, onRefreshProfile,
               {profile?.email || 'No disponible'}
             </Text>
           </View>
+          <TouchableOpacity
+            accessibilityRole="link"
+            onPress={openPrivacyPolicy}
+            style={styles.infoItem}
+          >
+            <Text style={styles.privacyLink}>Política de privacidad</Text>
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity
@@ -140,7 +200,65 @@ export default function SettingsScreen({ onNavigate, onLogout, onRefreshProfile,
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <Text style={styles.logoutBtnText}>🚪 Cerrar Sesión</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.deleteBtn}
+          onPress={confirmDeleteAccount}
+          disabled={deleting}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: deleting }}
+        >
+          <Text style={styles.deleteBtnText}>{deleting ? 'Eliminando cuenta...' : 'Eliminar cuenta'}</Text>
+        </TouchableOpacity>
       </ScrollView>
+      <Modal
+        visible={deleteModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!deleting) {
+            setDeleteModalVisible(false);
+            setPassword('');
+          }
+        }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.deleteDialog} accessibilityViewIsModal>
+            <Text style={styles.deleteTitle}>Confirma tu identidad</Text>
+            <Text style={styles.deleteDescription}>
+              Introduce tu contraseña actual. Si usas una cuenta de un proveedor externo, deja el campo vacío; es posible que debas iniciar sesión de nuevo y volver a intentarlo.
+            </Text>
+            <TextInput
+              accessibilityLabel="Contraseña actual"
+              placeholder="Contraseña actual"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!deleting}
+              style={styles.passwordInput}
+            />
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{ disabled: deleting }}
+              disabled={deleting}
+              onPress={deleteAccount}
+              style={styles.logoutBtn}
+            >
+              <Text style={styles.logoutBtnText}>{deleting ? 'Eliminando cuenta...' : 'Confirmar eliminación'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{ disabled: deleting }}
+              disabled={deleting}
+              onPress={() => { setDeleteModalVisible(false); setPassword(''); }}
+              style={styles.deleteBtn}
+            >
+              <Text style={styles.deleteBtnText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -251,6 +369,11 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginLeft: 10,
   },
+  privacyLink: {
+    color: '#1558a6',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   testModeBtn: {
     backgroundColor: '#4f46e5',
     paddingVertical: 12,
@@ -274,5 +397,44 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  deleteBtn: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 20,
+  },
+  deleteBtnText: {
+    color: '#b42318',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  deleteDialog: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+  },
+  deleteTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  deleteDescription: {
+    color: '#333',
+    marginVertical: 12,
+    lineHeight: 20,
+  },
+  passwordInput: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    padding: 12,
+    color: '#333',
   },
 });

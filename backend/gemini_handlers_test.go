@@ -64,7 +64,7 @@ func TestHandleGeminiChatProxiesRequest(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/gemini/chat",
-		strings.NewReader(`{"message":"¿Qué puedo desayunar?","profileName":"Ana"}`),
+		strings.NewReader(`{"message":"¿Qué puedo desayunar?"}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(response, request)
@@ -93,7 +93,6 @@ func TestHandleGeminiChatRejectsInvalidInput(t *testing.T) {
 	for _, body := range []string{
 		`{"message":"   "}`,
 		`{"message":"` + strings.Repeat("x", maxGeminiMessageRunes+1) + `"}`,
-		`{"message":"ok","profileName":"` + strings.Repeat("x", maxGeminiProfileRunes+1) + `"}`,
 		`not-json`,
 	} {
 		response := httptest.NewRecorder()

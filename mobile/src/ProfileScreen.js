@@ -5,9 +5,11 @@ import api from './api';
 import HealthProfileForm from './HealthProfileForm';
 import { getContactProfile, saveContactProfile } from './auth';
 
-const HEALTH_PROFILE_STORAGE_KEY = 'bienestar_health_profile_v1';
+const healthProfileStorageKey = (accountId) =>
+  `bienestar_health_profile_v1:${accountId == null ? 'guest' : String(accountId)}`;
 
 export default function ProfileScreen({ onNavigate, accountProfile, onAccountProfileUpdated }) {
+  const healthProfileKey = healthProfileStorageKey(accountProfile?.user_id);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -30,7 +32,7 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
       })
       .catch(() => {});
     return () => { active = false; };
-  }, []);
+  }, [accountProfile?.user_id]);
 
   const loadProfile = async () => {
     setLoading(true);
@@ -46,14 +48,14 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
 
       try {
         if (res?.data) {
-          await AsyncStorage.setItem(HEALTH_PROFILE_STORAGE_KEY, JSON.stringify(res.data));
+          await AsyncStorage.setItem(healthProfileKey, JSON.stringify(res.data));
         }
       } catch (_) {
         // ignore
       }
     } catch (e) {
       try {
-        const raw = await AsyncStorage.getItem(HEALTH_PROFILE_STORAGE_KEY);
+        const raw = await AsyncStorage.getItem(healthProfileKey);
         if (raw) {
           const parsed = JSON.parse(raw);
           if (parsed && typeof parsed === 'object' && Object.prototype.hasOwnProperty.call(parsed, 'profile')) {
@@ -140,7 +142,7 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
       setProfile(newProfile);
 
       try {
-        await AsyncStorage.setItem(HEALTH_PROFILE_STORAGE_KEY, JSON.stringify(refreshed.data));
+        await AsyncStorage.setItem(healthProfileKey, JSON.stringify(refreshed.data));
       } catch (_) {
         // ignore
       }
@@ -151,7 +153,7 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
       // Offline/local fallback
       setProfile(data);
       try {
-        await AsyncStorage.setItem(HEALTH_PROFILE_STORAGE_KEY, JSON.stringify(data));
+        await AsyncStorage.setItem(healthProfileKey, JSON.stringify(data));
       } catch (_) {
         // ignore
       }

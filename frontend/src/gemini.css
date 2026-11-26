@@ -63,6 +63,49 @@
   gap: 12px;
 }
 
+.gemini-disclosure {
+  max-width: 760px;
+  margin: 0 auto 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #7c2d12;
+  font-size: 13px;
+}
+
+.gemini-consent {
+  flex-basis: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #444;
+  font-size: 13px;
+}
+
+.gemini-report {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.gemini-report button {
+  margin: 4px 8px 0 0;
+  border: 0;
+  background: transparent;
+  color: #1558a6;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.gemini-report-form {
+  display: grid;
+  gap: 6px;
+}
+
+.gemini-report-form label,
+.gemini-report-form select {
+  display: block;
+}
+
 .gemini-messages::-webkit-scrollbar {
   width: 6px;
 }
@@ -192,6 +235,7 @@
   display: flex;
   align-items: flex-end;
   gap: 12px;
+  flex-wrap: wrap;
   padding: 16px 20px;
   background: #ffffff;
   border-top: 1px solid #e0e0e0;

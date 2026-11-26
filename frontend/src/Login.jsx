@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next'
 import './auth.css'
 
 
-export default function Login({onLogin, onSwitchToRegister}){
+export default function Login({onLogin, onSwitchToRegister, hideRegister = false}){
   const { t } = useTranslation();
   const [email,setEmail] = useState('')
   const [password,setPassword] = useState('')
@@ -149,9 +149,14 @@ export default function Login({onLogin, onSwitchToRegister}){
             </button>
           </div>
           
-          <div className="auth-footer">
-            <p>{t('noAccount') || '¿No tienes una cuenta?'} <button type="button" className="link-button" onClick={onSwitchToRegister}>{t('register')}</button></p>
-          </div>
+          {!hideRegister && (
+            <div className="auth-footer">
+              <p>{t('noAccount') || '¿No tienes una cuenta?'} <button type="button" className="link-button" onClick={onSwitchToRegister}>{t('register')}</button></p>
+            </div>
+          )}
+          <p className="auth-footer">
+            <a href="/privacy-policy.html" target="_blank" rel="noreferrer">Política de privacidad</a>
+          </p>
         </form>
       </div>
     </div>

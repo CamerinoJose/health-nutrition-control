@@ -16,8 +16,6 @@ const Messages = ({ profile }) => {
   const pollingInterval = useRef(null);
   const isInitialLoad = useRef(true);
 
-  console.log('[Messages] Component loaded with profile:', profile);
-
   // Initial load only
   useEffect(() => {
     loadConversations();
@@ -49,13 +47,8 @@ const Messages = ({ profile }) => {
 
   const loadConversations = async () => {
     try {
-      console.log('[Messages] Calling GET /messages/conversations');
       const res = await api.get('/messages/conversations');
-      console.log('[Messages] Raw response:', res);
-      console.log('[Messages] Response data:', res.data);
-      console.log('[Messages] Is array?', Array.isArray(res.data));
       const data = Array.isArray(res.data) ? res.data : [];
-      console.log('[Messages] Loaded conversations:', data);
       setConversations(data);
       
       // Only auto-select the first conversation on initial load
@@ -64,7 +57,7 @@ const Messages = ({ profile }) => {
         isInitialLoad.current = false;
       }
     } catch (err) {
-      console.error('Error loading conversations:', err);
+      console.error('Error loading conversations:', err?.message);
       setConversations([]);
     } finally {
       setLoading(false);
@@ -75,7 +68,6 @@ const Messages = ({ profile }) => {
     try {
       const res = await api.get(`/messages?user_id=${otherUserId}`);
       const data = Array.isArray(res.data) ? res.data : [];
-      console.log('[Messages] Loaded messages:', data);
       setMessages(data);
       
       // Mark unread messages as read
@@ -87,7 +79,7 @@ const Messages = ({ profile }) => {
         await api.put(`/messages/${msg.id}/read`);
       }
     } catch (err) {
-      console.error('Error loading messages:', err);
+      console.error('Error loading messages:', err?.message);
       setMessages([]);
     }
   };
@@ -98,7 +90,7 @@ const Messages = ({ profile }) => {
       const data = Array.isArray(res.data) ? res.data : [];
       setArchivedMessages(data);
     } catch (err) {
-      console.error('Error loading archived messages:', err);
+      console.error('Error loading archived messages:', err?.message);
       setArchivedMessages([]);
     }
   };
@@ -113,7 +105,6 @@ const Messages = ({ profile }) => {
     e.preventDefault();
     
     if (!newMessage.trim()) {
-      console.log('[Messages] Cannot send empty message');
       return;
     }
     
@@ -123,39 +114,28 @@ const Messages = ({ profile }) => {
       return;
     }
 
-    console.log('[Messages] Sending message to user_id:', selectedConversation.user_id);
-    console.log('[Messages] Message content:', newMessage.trim());
-
     try {
       const res = await api.post('/messages', {
         recipient_id: selectedConversation.user_id,
         content: newMessage.trim()
       });
 
-      console.log('[Messages] Message sent successfully:', res.data);
       setMessages([...messages, res.data]);
       setNewMessage('');
       loadConversations(); // Refresh conversation list
     } catch (err) {
-      console.error('[Messages] Error sending message:', err);
-      console.error('[Messages] Error response:', err.response?.data);
+      console.error('[Messages] Error sending message:', err?.message);
       alert('❌ Error al enviar mensaje. Verifica que el backend esté corriendo.');
     }
   };
 
   const deleteMessage = async (messageId) => {
-    console.log('[Messages] Delete button clicked for message:', messageId);
     const confirmed = window.confirm('¿Mover este mensaje al historial?');
-    if (!confirmed) {
-      console.log('[Messages] Delete cancelled by user');
-      return;
-    }
+    if (!confirmed) return;
 
     try {
       const msg = messages.find(m => m.id === messageId);
-      console.log('[Messages] Calling DELETE /messages/' + messageId);
       await api.delete(`/messages/${messageId}`);
-      console.log('[Messages] Delete successful, updating state');
       
       setMessages(prev => prev.filter(m => m.id !== messageId));
       if (msg) {
@@ -168,7 +148,7 @@ const Messages = ({ profile }) => {
       // Show success feedback
       alert('✅ Mensaje movido al historial');
     } catch (err) {
-      console.error('[Messages] Error deleting message:', err);
+      console.error('[Messages] Error deleting message:', err?.message);
       alert('❌ Error: No se pudo mover el mensaje. Verifica que el backend esté corriendo.');
     }
   };
@@ -187,7 +167,7 @@ const Messages = ({ profile }) => {
       
       loadConversations();
     } catch (err) {
-      console.error('Error starting conversation:', err);
+      console.error('Error starting conversation:', err?.message);
     }
   };
 

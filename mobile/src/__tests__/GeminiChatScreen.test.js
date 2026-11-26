@@ -1,5 +1,6 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Alert } from 'react-native';
 import api from '../api';
 import GeminiChatScreen from '../GeminiChatScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -22,9 +23,29 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+const acceptChatConsent = () => {
+  fireEvent.press(screen.getByLabelText('Acepto enviar mis mensajes a Google Gemini'));
+};
+
+test('requires explicit consent and displays the disclosure before sending', () => {
+  render(<GeminiChatScreen onNavigate={jest.fn()} profile={{ name: 'Ana' }} />);
+  expect(screen.getByText(/Tus mensajes se envían a Google Gemini/)).toBeTruthy();
+  expect(screen.getByText(/No incluyas datos que te identifiquen/)).toBeTruthy();
+  expect(screen.getByText(/no proporciona atención médica/)).toBeTruthy();
+  fireEvent.changeText(screen.getByPlaceholderText('Pregunta a Gemini...'), 'Pregunta');
+  fireEvent.press(screen.getByLabelText('Enviar mensaje'));
+  expect(api.post).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Enviar mensaje')).toBeDisabled();
+  acceptChatConsent();
+  expect(screen.getByLabelText('Enviar mensaje')).not.toBeDisabled();
+  acceptChatConsent();
+  expect(screen.getByLabelText('Enviar mensaje')).toBeDisabled();
+});
+
 test('sends the prompt through the authenticated backend API', async () => {
   api.post.mockResolvedValue({ data: { text: 'Una opción es avena con fruta.' } });
   render(<GeminiChatScreen onNavigate={jest.fn()} profile={{ name: 'Ana' }} />);
+  acceptChatConsent();
 
   fireEvent.changeText(screen.getByPlaceholderText('Pregunta a Gemini...'), '¿Qué puedo desayunar?');
   fireEvent.press(screen.getByText('➤'));
@@ -32,7 +53,6 @@ test('sends the prompt through the authenticated backend API', async () => {
   await waitFor(() => {
     expect(api.post).toHaveBeenCalledWith('/gemini/chat', {
       message: '¿Qué puedo desayunar?',
-      profileName: 'Ana',
     });
   });
   expect(await screen.findByText('Una opción es avena con fruta.')).toBeTruthy();
@@ -40,6 +60,7 @@ test('sends the prompt through the authenticated backend API', async () => {
 test('shows a temporary-provider message for a 503 response', async () => {
   api.post.mockRejectedValue({ response: { status: 503 } });
   render(<GeminiChatScreen onNavigate={jest.fn()} profile={{ name: 'Ana' }} />);
+  acceptChatConsent();
 
   fireEvent.changeText(screen.getByPlaceholderText('Pregunta a Gemini...'), '¿Qué puedo desayunar?');
   fireEvent.press(screen.getByText('➤'));
@@ -57,6 +78,7 @@ test('restores and saves Gemini history for the active user', async () => {
   api.post.mockResolvedValue({ data: { text: 'Nueva respuesta' } });
 
   render(<GeminiChatScreen onNavigate={jest.fn()} profile={{ name: 'Ana', user_id: 42 }} />);
+  acceptChatConsent();
 
   expect(await screen.findByText('Respuesta anterior')).toBeTruthy();
   fireEvent.changeText(screen.getByPlaceholderText('Pregunta a Gemini...'), 'Pregunta nueva');
@@ -72,6 +94,7 @@ test('restores and saves Gemini history for the active user', async () => {
 test('copies bot response text to the clipboard', async () => {
   api.post.mockResolvedValue({ data: { text: 'Texto que quiero copiar' } });
   render(<GeminiChatScreen onNavigate={jest.fn()} profile={{ name: 'Ana', user_id: 42 }} />);
+  acceptChatConsent();
 
   fireEvent.changeText(screen.getByPlaceholderText('Pregunta a Gemini...'), 'Dame texto');
   fireEvent.press(screen.getByText('➤'));
@@ -80,4 +103,72 @@ test('copies bot response text to the clipboard', async () => {
   const copyButtons = screen.getAllByLabelText('Copiar texto');
   fireEvent.press(copyButtons[copyButtons.length - 1]);
   expect(Clipboard.setString).toHaveBeenCalledWith('Texto que quiero copiar');
+});
+
+test.each([
+  ['Consejo médico inseguro', 'unsafe_medical_advice'],
+  ['Contenido dañino', 'harmful'],
+  ['Privacidad', 'privacy'],
+  ['Otro', 'other'],
+])('reports only the selected assistant response with reason %s', async (label, reason) => {
+  api.post.mockResolvedValueOnce({ data: { text: 'Respuesta seleccionada' } }).mockResolvedValueOnce({});
+  render(<GeminiChatScreen onNavigate={jest.fn()} profile={{ name: 'Ana' }} />);
+  acceptChatConsent();
+
+  expect(screen.queryByLabelText('Reportar respuesta')).toBeNull();
+  fireEvent.changeText(screen.getByPlaceholderText('Pregunta a Gemini...'), 'Mi pregunta privada');
+  fireEvent.press(screen.getByText('➤'));
+  await screen.findByText('Respuesta seleccionada');
+  expect(screen.getAllByLabelText('Reportar respuesta')).toHaveLength(1);
+  fireEvent.press(screen.getByLabelText('Reportar respuesta'));
+  fireEvent.press(screen.getByText(label));
+
+  await waitFor(() => expect(api.post).toHaveBeenLastCalledWith('/gemini/reports', {
+    responseText: 'Respuesta seleccionada',
+    reason,
+  }));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith(
+    'Reporte enviado', 'Gracias por ayudarnos a mejorar.',
+  ));
+});
+
+test('shows an error when a report fails and allows retry', async () => {
+  api.post.mockResolvedValueOnce({ data: { text: 'Respuesta a reportar' } })
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce({});
+  render(<GeminiChatScreen onNavigate={jest.fn()} profile={{ name: 'Ana' }} />);
+  acceptChatConsent();
+
+  fireEvent.changeText(screen.getByPlaceholderText('Pregunta a Gemini...'), 'Pregunta');
+  fireEvent.press(screen.getByText('➤'));
+  await screen.findByText('Respuesta a reportar');
+  fireEvent.press(screen.getByLabelText('Reportar respuesta'));
+  fireEvent.press(screen.getByText('Privacidad'));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith(
+    'Error', 'No se pudo enviar el reporte. Inténtalo de nuevo.',
+  ));
+  fireEvent.press(screen.getByText('Privacidad'));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith(
+    'Reporte enviado', 'Gracias por ayudarnos a mejorar.',
+  ));
+});
+
+test('can cancel reporting and prevents duplicate submissions in flight', async () => {
+  let resolveReport;
+  api.post.mockResolvedValueOnce({ data: { text: 'Respuesta' } })
+    .mockReturnValueOnce(new Promise((resolve) => { resolveReport = resolve; }));
+  render(<GeminiChatScreen onNavigate={jest.fn()} profile={{ name: 'Ana' }} />);
+  acceptChatConsent();
+
+  fireEvent.changeText(screen.getByPlaceholderText('Pregunta a Gemini...'), 'Pregunta');
+  fireEvent.press(screen.getByText('➤'));
+  await screen.findByText('Respuesta');
+  fireEvent.press(screen.getByLabelText('Reportar respuesta'));
+  fireEvent.press(screen.getByText('Cancelar'));
+  expect(api.post).toHaveBeenCalledTimes(1);
+  fireEvent.press(screen.getByLabelText('Reportar respuesta'));
+  fireEvent.press(screen.getByText('Otro'));
+  fireEvent.press(screen.getByText('Otro'));
+  expect(api.post).toHaveBeenCalledTimes(2);
+  await act(async () => { resolveReport({}); });
 });

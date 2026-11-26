@@ -88,6 +88,35 @@
   background: #f9f9f9;
 }
 
+.reports-table {
+  overflow-x: auto;
+  margin-bottom: 20px;
+}
+
+.reports-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.reports-table th,
+.reports-table td {
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #eee;
+}
+
+.reports-table th {
+  background: #f0f0f0;
+}
+
+.report-content {
+  min-width: 240px;
+  max-width: 520px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .role-badge {
   display: inline-block;
   padding: 4px 12px;

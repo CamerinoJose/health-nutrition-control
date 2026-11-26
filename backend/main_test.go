@@ -15,6 +15,81 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 )
 
+func TestGetJWTKeyRequiresStrongConfiguredSecret(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		secret string
+	}{
+		{name: "missing"},
+		{name: "whitespace", secret: " \t "},
+		{name: "too short", secret: "short"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("JWT_SECRET", test.secret)
+			if _, err := getJWTKey(); err == nil {
+				t.Fatal("expected invalid JWT_SECRET to be rejected")
+			}
+		})
+	}
+
+	t.Run("valid", func(t *testing.T) {
+		const secret = "0123456789abcdef0123456789abcdef"
+		t.Setenv("JWT_SECRET", secret)
+		key, err := getJWTKey()
+		if err != nil {
+			t.Fatalf("getJWTKey returned error: %v", err)
+		}
+		if string(key) != secret {
+			t.Fatal("getJWTKey returned a different secret")
+		}
+	})
+}
+
+func TestAuthMiddlewareRejectsDeletedAccountToken(t *testing.T) {
+	dsn := os.Getenv("MEDICINES_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("MEDICINES_TEST_POSTGRES_DSN is not set")
+	}
+	testDB, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testDB.SetMaxOpenConns(1)
+	if err := testDB.Ping(); err != nil {
+		_ = testDB.Close()
+		t.Fatal(err)
+	}
+	if _, err := testDB.Exec(`CREATE TEMP TABLE users (id INTEGER PRIMARY KEY)`); err != nil {
+		_ = testDB.Close()
+		t.Fatal(err)
+	}
+
+	previousDB, previousJWTKey := db, jwtKey
+	db, jwtKey = testDB, []byte("deleted-account-test-jwt-secret")
+	t.Cleanup(func() {
+		db, jwtKey = previousDB, previousJWTKey
+		_ = testDB.Close()
+	})
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{UserID: 1}).SignedString(jwtKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/protected", authMiddleware(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected deleted account token to receive %d, got %d", http.StatusUnauthorized, response.Code)
+	}
+}
+
 func TestOAuthLogsExcludeCredentialsAndLastTokenRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var requestLogs, oauthLogs bytes.Buffer
@@ -144,6 +219,12 @@ func runMedicineEndpointTest(t *testing.T, driver, dsn string, sqlite bool) {
 	idDefinition := "SERIAL PRIMARY KEY"
 	if sqlite {
 		idDefinition = "INTEGER PRIMARY KEY AUTOINCREMENT"
+	}
+	if _, err := testDB.Exec("CREATE TEMP TABLE users (id INTEGER PRIMARY KEY)"); err != nil {
+		t.Fatalf("could not create temporary users table: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO users (id) VALUES (42)"); err != nil {
+		t.Fatalf("could not create test user: %v", err)
 	}
 	if _, err := testDB.Exec("CREATE TEMP TABLE medicines (id " + idDefinition + ", user_id INTEGER, name TEXT, time TEXT, taken BOOLEAN DEFAULT FALSE)"); err != nil {
 		t.Fatalf("could not create temporary medicines table: %v", err)

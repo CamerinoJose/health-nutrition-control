@@ -170,3 +170,12 @@ CREATE TABLE recommendations (
     next_goals TEXT,
     created_at TEXT
 );
+
+CREATE TABLE gemini_reports (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    response_text TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

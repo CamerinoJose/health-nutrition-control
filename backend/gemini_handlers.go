@@ -24,14 +24,12 @@ const (
 	maxGeminiRequestBytes  = 8 << 10
 	maxGeminiResponseBytes = 1 << 20
 	maxGeminiMessageRunes  = 500
-	maxGeminiProfileRunes  = 120
 )
 
 var geminiHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 type geminiChatRequest struct {
-	Message     string `json:"message" binding:"required"`
-	ProfileName string `json:"profileName"`
+	Message string `json:"message" binding:"required"`
 }
 
 type geminiPart struct {
@@ -121,10 +119,7 @@ func handleGeminiChat(c *gin.Context, client *http.Client, apiKey, model, baseUR
 	}
 
 	input.Message = strings.TrimSpace(input.Message)
-	input.ProfileName = strings.TrimSpace(input.ProfileName)
-	if input.Message == "" ||
-		utf8.RuneCountInString(input.Message) > maxGeminiMessageRunes ||
-		utf8.RuneCountInString(input.ProfileName) > maxGeminiProfileRunes {
+	if input.Message == "" || utf8.RuneCountInString(input.Message) > maxGeminiMessageRunes {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "El mensaje no es válido."})
 		return
 	}
@@ -158,10 +153,6 @@ func generateGeminiResponse(
 	}
 
 	systemPrompt := `Eres un asistente de nutrición amigable y experto. Ayudas con consejos de nutrición, información sobre alimentos, recetas saludables y planes de comidas. Responde siempre en español, de manera amigable y clara. Sé conciso pero informativo. No diagnostiques ni sustituyas la atención de profesionales de salud.`
-	if input.ProfileName != "" {
-		systemPrompt += "\nPersonaliza tus respuestas cuando sea apropiado para " + input.ProfileName + "."
-	}
-
 	payload := geminiGenerateRequest{
 		SystemInstruction: geminiContent{Parts: []geminiPart{{Text: systemPrompt}}},
 		Contents: []geminiContent{{

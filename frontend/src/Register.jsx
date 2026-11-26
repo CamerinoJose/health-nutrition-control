@@ -105,6 +105,7 @@ export default function Register({onRegistered, onSwitchToLogin}){
           
           <div className="auth-footer">
             <p>¿Ya tienes una cuenta? <button type="button" className="link-button" onClick={onSwitchToLogin}>Inicia sesión</button></p>
+            <p><a href="/privacy-policy.html" target="_blank" rel="noreferrer">Política de privacidad</a></p>
           </div>
         </form>
       </div>

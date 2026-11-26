@@ -42,6 +42,8 @@ type OAuthConfig struct {
 	UserInfoURL  string
 }
 
+const socialLoginPasswordPlaceholder = "$2a$10$defaultpasswordforsociallogins"
+
 // Helper function to get OAuth configs from environment variables
 func getOAuthConfigs() map[string]OAuthConfig {
 	// Read env vars once and log if missing (no secrets printed)
@@ -364,10 +366,9 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 		err = queryRowDB("SELECT id FROM users WHERE LOWER(email) = LOWER(?)", email).Scan(&userID)
 		if err == sql.ErrNoRows {
 			// No existe, crear nuevo usuario.
-			hashedPassword := "$2a$10$defaultpasswordforsociallogins"
 			_, createErr := execDB(
 				"INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, 'user')",
-				email, hashedPassword, name,
+				email, socialLoginPasswordPlaceholder, name,
 			)
 			if createErr != nil {
 				return 0, "", createErr
@@ -423,7 +424,11 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 		},
 	})
 
-	tokenString, err := token.SignedString(getJWTKey())
+	key, err := getJWTKey()
+	if err != nil {
+		return 0, "", err
+	}
+	tokenString, err := token.SignedString(key)
 	if err != nil {
 		return 0, "", err
 	}

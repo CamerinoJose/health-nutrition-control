@@ -6,7 +6,8 @@ import Constants from 'expo-constants';
 // Configurar comportamiento de notificaciones cuando la app está en foreground
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
   }),
@@ -60,7 +61,6 @@ export async function registerForPushNotificationsAsync() {
     }
 
     token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-    console.log('📱 Push Token obtenido:', token);
 
     return token;
   } catch (error) {
@@ -208,7 +208,6 @@ export async function getScheduledNotifications() {
  */
 export function setupNotificationReceivedListener(callback) {
   return Notifications.addNotificationReceivedListener(notification => {
-    console.log('📨 Notificación recibida:', notification);
     if (callback) {
       callback(notification);
     }
@@ -221,8 +220,6 @@ export function setupNotificationReceivedListener(callback) {
  */
 export function setupNotificationResponseListener(callback) {
   return Notifications.addNotificationResponseReceivedListener(response => {
-    console.log('👆 Usuario tocó la notificación:', response);
-    
     const data = response.notification.request.content.data;
     
     if (callback) {

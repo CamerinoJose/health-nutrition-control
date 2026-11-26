@@ -9,7 +9,7 @@ function addLog(msg) {
   logBuffer.push(msg);
 }
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
-import { View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform, LogBox, KeyboardAvoidingView } from 'react-native'
+import { View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform, LogBox, KeyboardAvoidingView, Alert } from 'react-native'
 import Constants from 'expo-constants'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as WebBrowser from 'expo-web-browser'
@@ -20,9 +20,9 @@ import { useTranslation } from 'react-i18next'
 import api from './src/api'
 import MedicinesScreen from './MedicinesScreen'
 import ReminderCenter from './src/ReminderCenter'
-import { activateReminderAccount, pauseReminderAccount, reminderIdFromUrl } from './src/reminderAlarm'
+import { activateReminderAccount, pauseReminderAccount, clearReminderAccount, reminderIdFromUrl } from './src/reminderAlarm'
 import DiabetesNotificationsScreen from './src/DiabetesNotificationsScreen'
-import { saveToken, getToken, clearToken, normalizeFullName, validateRegistration, saveActiveAccountId } from './src/auth'
+import { saveToken, getToken, clearToken, normalizeFullName, validateRegistration, saveActiveAccountId, getActiveAccountId, clearAccountLocalData } from './src/auth'
 import { startNotificationListening, stopNotificationListening, setupNotificationResponseHandler, cancelAccountScheduledNotifications } from './src/notifications'
 import MealPlanScreen from './src/MealPlanScreen'
 import ProgressScreen from './src/ProgressScreen'
@@ -203,10 +203,6 @@ function AppContent() {
       // Construir la URL de auth con el redirect_uri como parámetro
       const authUrl = `${BACKEND_URL}/api/auth/google?redirect_uri=${encodeURIComponent(redirectUrl)}`;
       
-      console.log('Auth URL:', authUrl);
-      console.log('Redirect URL:', redirectUrl);
-      console.log('Opening browser for OAuth...');
-      
       // Abrir el navegador para OAuth
       const result = await WebBrowser.openAuthSessionAsync(
         authUrl, 
@@ -254,7 +250,7 @@ function AppContent() {
       }
       
     } catch (e) {
-      console.warn('Google login error:', e);
+      console.warn('Google login failed.');
       alert('Error en login: ' + (e?.message || 'Desconocido')); 
     }
   }
@@ -319,12 +315,13 @@ function AppContent() {
     try {
       console.log('[completeLogin] Fetching profile...');
       const loadedProfile = await fetchProfile(token);
+      if (!loadedProfile) return;
       console.log('[completeLogin] Profile fetched successfully, setting view to dashboard');
       setView(loadedProfile?.contact_preference && (loadedProfile.contact_preference === 'app' || loadedProfile.phone)
         ? nextView
         : 'required-contact');
     } catch (e) {
-      console.warn('[completeLogin] Profile fetch failed:', e);
+      console.warn('[completeLogin] Profile fetch failed.');
       setView(nextView);
     }
   }
@@ -452,9 +449,7 @@ function AppContent() {
 
   async function fetchProfile(tk){
     try{
-      console.log('fetchProfile: Making API call to /me with token:', tk.substring(0, 20) + '...');
       const res = await api.get('/me',{ headers: { Authorization: `Bearer ${tk}` } })
-      console.log('fetchProfile: Response received:', res.data);
 
       // Ensure nutritionist fields exist so messaging can prioritize the assigned nutritionist
       const enhancedProfile = {
@@ -488,10 +483,40 @@ function AppContent() {
         // Load upcoming appointments summary
         await loadUpcomingAppointments(tk);
         return enhancedProfile;
-    }catch(e){ 
-      console.warn('fetchProfile: Error -', e.message, e.response?.status, e.response?.data);
+    }catch(e){
+      console.warn('fetchProfile: API request failed with status', e.response?.status);
+      if (e.response?.status === 401) {
+        let cleanupError = null;
+        if (e.response?.data?.code === 'account_deleted') {
+          try {
+            const accountId = await getActiveAccountId();
+            await cleanupDeletedAccountLocally(accountId);
+          } catch (cleanupFailure) {
+            cleanupError = cleanupFailure;
+            console.error('Could not clear local data for deleted account.');
+          }
+        }
+        await handleLogout();
+        setView('login');
+        if (cleanupError) {
+          Alert.alert(
+            'Cuenta eliminada',
+            'La cuenta ya no existe, pero no se pudieron borrar todos los datos locales de este dispositivo.',
+          );
+        }
+        return null;
+      }
       throw e;
     }
+  }
+
+  async function cleanupDeletedAccountLocally(accountId) {
+    stopNotificationListening();
+    await cancelAccountScheduledNotifications();
+    if (accountId != null) {
+      await clearReminderAccount(accountId);
+    }
+    await clearAccountLocalData(accountId);
   }
 
   async function loadTodayMeals(tk, accountId) {
@@ -511,7 +536,6 @@ function AppContent() {
       const dayName = dayNames[today.getDay()];
       const spanishDayName = spanishDays[dayName];
       
-      console.log('[LoadTodayMeals] Loading meals for day:', spanishDayName);
       
       const response = await api.get('/meal-plan', {
         headers: { Authorization: `Bearer ${tk}` }
@@ -537,14 +561,12 @@ function AppContent() {
           : meals[0].day_of_week;
         todaysMeals = meals.filter(m => m.day_of_week === candidateDay);
         effectiveDay = candidateDay;
-        console.log('[LoadTodayMeals] No meals for today, falling back to', candidateDay);
       }
       
-      console.log('[LoadTodayMeals] Found', todaysMeals.length, 'meals for day', effectiveDay);
       setTodayMeals(todaysMeals);
       setDisplayedDay(effectiveDay);
-    } catch (error) {
-      console.warn('[LoadTodayMeals] Error:', error.message);
+    } catch {
+      console.warn('[LoadTodayMeals] Request failed.');
       try {
         if (accountId != null) {
           const raw = await AsyncStorage.getItem(`bienestar_meal_plan_v1:${String(accountId)}`);
@@ -590,15 +612,14 @@ function AppContent() {
         .filter(a => {
           const d = (a.appointment_date || '').slice(0,10);
           const passes = d && d >= todayStr;
-          console.log('[Appointments] Checking:', a.title, '| date:', d, '| passes:', passes);
           return passes;
         })
         .sort((a, b) => a.appointment_date.localeCompare(b.appointment_date))
         .slice(0, 2); // show next 2
       setUpcomingAppointments(upcoming);
       console.log('[Appointments] Loaded', upcoming.length, 'upcoming appointments');
-    } catch (error) {
-      console.warn('[Appointments] Error:', error.message);
+    } catch {
+      console.warn('[Appointments] Request failed.');
       setUpcomingAppointments([]);
     } finally {
       setLoadingAppointments(false);
@@ -689,6 +710,24 @@ function AppContent() {
     setProfile(null)
     setDrawerOpen(false)
     setView('home')
+  }
+
+  async function handleAccountDeleted() {
+    let cleanupError = null;
+    try {
+      await cleanupDeletedAccountLocally(profile?.user_id);
+    } catch (error) {
+      cleanupError = error;
+      console.error('Could not clear local data after account deletion.');
+    }
+    await handleLogout();
+    setView('login');
+    if (cleanupError) {
+      Alert.alert(
+        'Cuenta eliminada',
+        'La cuenta se eliminó del servidor, pero no se pudieron borrar todos los datos locales de este dispositivo.',
+      );
+    }
   }
 
   function openDrawer() {
@@ -849,6 +888,16 @@ function AppContent() {
                 <Text style={{fontSize: 16, fontWeight: '500', color: '#3c4043'}}>Continuar con Google</Text>
               </TouchableOpacity>
             </View>
+            <TouchableOpacity
+              accessibilityRole="link"
+              onPress={() => Linking.openURL('https://health-nutrition-control-web.onrender.com/privacy-policy.html')
+                .catch(() => Alert.alert('Error', 'No se pudo abrir la política de privacidad.'))}
+              style={{alignItems: 'center', marginBottom: 16}}
+            >
+              <Text style={{color: '#2563eb', textDecorationLine: 'underline'}}>
+                Política de privacidad
+              </Text>
+            </TouchableOpacity>
             <Button title="Volver" onPress={() => setView('home')} />
           </ScrollView>
           </KeyboardAvoidingView>
@@ -979,7 +1028,7 @@ function AppContent() {
       }
 
       if (view === 'settings') {
-        return <SettingsScreen onNavigate={navigate} onLogout={handleLogout} onRefreshProfile={refreshProfile} profile={profile} />
+        return <SettingsScreen onNavigate={navigate} onLogout={handleLogout} onAccountDeleted={handleAccountDeleted} onRefreshProfile={refreshProfile} profile={profile} />
       }
 
       if (view === 'test-mode') {

@@ -33,19 +33,14 @@ const Appointments = () => {
     try {
       // Si no hay mes seleccionado, cargar todas las citas
       const url = selectedMonth ? `/appointments?month=${selectedMonth}` : '/appointments';
-      console.log('Loading appointments from:', url);
       const response = await api.get(url);
       const appointmentsList = response.data || [];
-      console.log('=== Appointments loaded ===');
-      console.log('Total appointments:', appointmentsList.length);
-      console.log('Appointments:', appointmentsList);
       setAppointments(appointmentsList);
       
       // Si es la primera carga y hay citas, ajustar al mes de la primera cita
       if (!selectedMonth && appointmentsList.length > 0) {
         const firstDate = appointmentsList[0].appointment_date;
         const monthFromFirstAppointment = firstDate.slice(0, 7);
-        console.log('Setting month to:', monthFromFirstAppointment);
         setSelectedMonth(monthFromFirstAppointment);
       } else if (!selectedMonth && appointmentsList.length === 0) {
         // Si no hay citas, usar el mes actual
@@ -56,11 +51,10 @@ const Appointments = () => {
       if (appointmentsList.length > 0) {
         await loadPendingChanges(appointmentsList);
       } else {
-        console.log('No appointments to check for changes');
         setPendingChanges([]);
       }
     } catch (error) {
-      console.error('Error loading appointments:', error);
+      console.error('Error loading appointments:', error?.message);
     }
   };
 
@@ -70,7 +64,7 @@ const Appointments = () => {
       const slots = await getAvailableSlots(date);
       setQuickSlots(Array.isArray(slots) ? slots : []);
     } catch (error) {
-      console.error('Error loading available slots:', error);
+      console.error('Error loading available slots:', error?.message);
       setQuickSlots([]);
     } finally {
       setLoadingSlots(false);
@@ -78,38 +72,29 @@ const Appointments = () => {
   };
 
   const loadPendingChanges = async (appointmentsList) => {
-    console.log('=== Loading pending changes ===');
-    console.log('Checking changes for', appointmentsList.length, 'appointments');
-    
     try {
       const changes = [];
       for (const apt of appointmentsList) {
-        console.log(`Checking appointment ${apt.id}: "${apt.title}"`);
         try {
           const aptChanges = await getAppointmentChanges(apt.id);
-          console.log(`  → Got ${aptChanges.length} changes:`, aptChanges);
           
           const pending = aptChanges.filter(c => c.status === 'pending');
-          console.log(`  → ${pending.length} pending changes`);
           
           if (pending.length > 0) {
             const changesWithAppointment = pending.map(c => ({ 
               ...c, 
               appointment: apt 
             }));
-            console.log('  → Adding pending changes:', changesWithAppointment);
             changes.push(...changesWithAppointment);
           }
         } catch (err) {
-          console.log(`  → Error loading changes for appointment ${apt.id}:`, err.message);
+          console.error('Error loading appointment changes:', err?.message);
         }
       }
       
-      console.log('=== Total pending changes found:', changes.length, '===');
-      console.log('Pending changes:', changes);
       setPendingChanges(changes);
     } catch (error) {
-      console.error('Error loading pending changes:', error);
+      console.error('Error loading pending changes:', error?.message);
     }
   };
 
@@ -119,7 +104,7 @@ const Appointments = () => {
       alert('Cambio de cita aceptado');
       await loadAppointments();
     } catch (error) {
-      console.error('Error accepting change:', error);
+      console.error('Error accepting change:', error?.message);
       alert('Error al aceptar el cambio');
     }
   };
@@ -133,7 +118,7 @@ const Appointments = () => {
       alert('Cambio de cita rechazado');
       await loadAppointments();
     } catch (error) {
-      console.error('Error rejecting change:', error);
+      console.error('Error rejecting change:', error?.message);
       alert('Error al rechazar el cambio');
     }
   };
@@ -149,7 +134,7 @@ const Appointments = () => {
       loadAppointments();
       closeModal();
     } catch (error) {
-      console.error('Error saving appointment:', error);
+      console.error('Error saving appointment:', error?.message);
       alert('Error al guardar la cita');
     }
   };
@@ -161,7 +146,7 @@ const Appointments = () => {
       await api.delete(`/appointments/${id}`);
       loadAppointments();
     } catch (error) {
-      console.error('Error deleting appointment:', error);
+      console.error('Error deleting appointment:', error?.message);
     }
   };
 
@@ -173,7 +158,7 @@ const Appointments = () => {
       });
       loadAppointments();
     } catch (error) {
-      console.error('Error completing appointment:', error);
+      console.error('Error completing appointment:', error?.message);
     }
   };
 

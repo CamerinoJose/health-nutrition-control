@@ -25,9 +25,6 @@ api.interceptors.request.use(
     const token = getToken()
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
-      console.log(`[API] Request to ${config.method?.toUpperCase()} ${config.url}`)
-    } else {
-      console.warn(`[API] Request to ${config.method?.toUpperCase()} ${config.url} WITHOUT TOKEN`)
     }
     return config
   },
@@ -39,14 +36,13 @@ api.interceptors.request.use(
 // Add response interceptor to log errors
 api.interceptors.response.use(
   (response) => {
-    console.log(`[API] ✅ ${response.config.method?.toUpperCase()} ${response.config.url} → ${response.status}`)
     return response
   },
   (error) => {
     if (error.response) {
-      console.error(`[API] ❌ ${error.config?.method?.toUpperCase()} ${error.config?.url} → ${error.response.status}`)
+      console.error(`[API] Request failed with status ${error.response.status}`)
     } else {
-      console.error(`[API] ❌ Network error:`, error.message)
+      console.error('[API] Network error:', error.message)
     }
     return Promise.reject(error)
   }

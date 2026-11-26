@@ -19,6 +19,7 @@ import Messages from './Messages'
 import NutritionistDashboard from './NutritionistDashboard'
 import NotificationsBell from './NotificationsBell'
 import GeminiChat from './GeminiChat'
+import AccountDeletion from './AccountDeletion'
 import GoogleCallback from './GoogleCallback'
 import ChooseNutritionist from './ChooseNutritionist'
 import BookAppointment from './BookAppointment'
@@ -29,9 +30,12 @@ import { initNotifications, requestNotificationPermission, scheduleMealReminders
 
 export default function App(){
   const { t, i18n } = useTranslation()
+  const isAccountDeletionPage = new URLSearchParams(window.location.search).get('view') === 'delete-account'
   const [token, setToken] = useState(getToken())
   // Set initial view: if token exists, go to home/dashboard, else show landing
-  const [view, setView] = useState(getToken() ? 'home' : 'landing')
+  const [view, setView] = useState(getToken()
+    ? (isAccountDeletionPage ? 'delete-account' : 'home')
+    : (isAccountDeletionPage ? 'login' : 'landing'))
   const [profile, setProfile] = useState(null)
   const [language, setLanguage] = useState(i18n.language)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -40,8 +44,6 @@ export default function App(){
 
   // Fallback display name if profile.name is empty
   const displayName = profile?.name || profile?.email || 'Usuario'
-
-  console.log('[App] Current displayName:', displayName, 'profile:', profile);
 
   function decodeTokenClaims(tkn) {
     try {
@@ -95,7 +97,7 @@ export default function App(){
         // Save token and clear URL
         setToken(oauthToken);
         saveToken(oauthToken);
-        setView('home'); // Ensure dashboard is shown after Google login
+        setView(isAccountDeletionPage ? 'delete-account' : 'home')
         window.history.replaceState({}, document.title, '/');
       } catch (e) {
         console.error('Error saving token to localStorage:', e);
@@ -160,7 +162,7 @@ export default function App(){
           })
         }
         fetchProfile();
-        setView('home');
+        setView(isAccountDeletionPage ? 'delete-account' : 'home')
       }
     };
     
@@ -175,14 +177,12 @@ export default function App(){
   useEffect(()=>{
     if(token){
       setLoadingProfile(true);
-      console.log('[App] Token detected, fetching profile...');
       // Try to fetch profile from API
       fetchProfile()
 
       // Also set minimal profile from token claims to avoid empty header
       const claims = decodeTokenClaims(token)
       if (claims && (!profile || !profile.name)) {
-        console.log('[App] Setting profile from token claims:', claims.name);
         setProfile(prev => {
           // Only update if we don't have a profile yet
           if (!prev || !prev.name) {
@@ -215,7 +215,6 @@ export default function App(){
       const res = await api.get('/me')
       // Check if we got HTML instead of JSON (ngrok error page)
       if (typeof res.data === 'string' && res.data.includes('<!DOCTYPE')) {
-        console.log('[App] API returned HTML error page, using token claims instead');
         const claims = decodeTokenClaims(token)
         if (claims) {
           setProfile({
@@ -230,19 +229,16 @@ export default function App(){
           })
         }
       } else {
-        console.log('[App] Profile fetched:', res.data);
         setProfile(res.data)
       }
     }catch(e){
-      console.error('Error fetching profile:', e)
-      // If token is invalid, clear it
+      console.error('Error fetching profile:', e?.message)
       if(e.response?.status === 401){
         handleLogout()
       } else {
         // Even if fetch fails, try to use token claims for display
         const claims = decodeTokenClaims(token)
         if (claims) {
-          console.log('[App] Using token claims as fallback:', claims);
           setProfile({
             user_id: claims.user_id,
             name: claims.name,
@@ -264,7 +260,14 @@ export default function App(){
     clearToken()
     setToken(null)
     setProfile(null)
-    setView('landing') // Redirect to landing page after logout
+    setView(isAccountDeletionPage ? 'login' : 'landing')
+  }
+
+  function handleAccountDeleted(){
+    clearToken()
+    setToken(null)
+    setProfile(null)
+    setView('account-deleted')
   }
 
   return (
@@ -385,8 +388,21 @@ export default function App(){
           </div>
         )}
 
-        {view === 'login' && <Login onLogin={(tkn)=>{ setToken(tkn); setView('home') }} onSwitchToRegister={()=>setView('register')} />}
+        {view === 'login' && (
+          <Login
+            hideRegister={isAccountDeletionPage}
+            onLogin={(tkn)=>{ setToken(tkn); setView(isAccountDeletionPage ? 'delete-account' : 'home') }}
+            onSwitchToRegister={()=>setView('register')}
+          />
+        )}
         {view === 'register' && <Register onRegistered={()=>{ setView('login') }} onSwitchToLogin={()=>setView('login')} />}
+        {view === 'account-deleted' && (
+          <section className="settings-container" role="status">
+            <h2>Cuenta eliminada</h2>
+            <p>Tu cuenta y los datos asociados se eliminaron.</p>
+            <a href="/">Volver al inicio</a>
+          </section>
+        )}
         
         {token && profile && !loadingProfile && (
           <>
@@ -399,6 +415,12 @@ export default function App(){
             {view === 'diet' && <MealPlan />}
             {view === 'profile' && <Profile token={token} profile={profile} />}
             {view === 'settings' && <Settings profile={profile} onUpdate={setProfile} />}
+            {view === 'delete-account' && (
+              <AccountDeletion
+                onCancel={() => setView('settings')}
+                onDeleted={handleAccountDeleted}
+              />
+            )}
             {view === 'test-mode' && <TestMode profile={profile} />}
             {view === 'appointments' && <Appointments />}
             {view === 'choose-nutritionist' && (
@@ -441,7 +463,7 @@ export default function App(){
             )}
             
             {view === 'gemini' && (
-              <GeminiChat onNavigate={setView} profile={profile} />
+              <GeminiChat onNavigate={setView} />
             )}
             
             {view === 'appointments' && (
