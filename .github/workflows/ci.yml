@@ -120,7 +120,9 @@ jobs:
           distribution: temurin
           java-version: 17
       - run: npm ci
-      - run: ./android/gradlew -p android assembleDebug
+      - run: |
+          chmod +x android/gradlew
+          android/gradlew -p android assembleDebug
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
