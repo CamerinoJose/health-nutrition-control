@@ -94,7 +94,7 @@ export default function TestModeScreen({ onNavigate, profile }) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => onNavigate('settings')} style={styles.back}>
+        <TouchableOpacity testID="test-mode-back" onPress={() => onNavigate('settings')} style={styles.back}>
           <Text style={styles.backText}>← Configuración</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Modo de pruebas</Text>
@@ -114,6 +114,7 @@ export default function TestModeScreen({ onNavigate, profile }) {
             {TEST_CASES.filter((item) => item.group === group).map((item) => (
               <TouchableOpacity
                 key={item.id}
+                testID={`test-case-${item.id}`}
                 style={[styles.caseRow, selectedId === item.id && styles.caseSelected]}
                 onPress={() => setSelectedId(item.id)}
               >

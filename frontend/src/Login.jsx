@@ -70,7 +70,7 @@ export default function Login({onLogin, onSwitchToRegister}){
       </div>
       <div className="auth-right">
         <form onSubmit={submit} className="auth-form">
-          <h2>{t('login')}</h2>
+          <h2 data-testid="login-title">{t('login')}</h2>
           {err && <div className="auth-error">{err}</div>}
           
           <div className="input-group">
@@ -79,6 +79,7 @@ export default function Login({onLogin, onSwitchToRegister}){
               <span className="input-icon">📧</span>
               <input 
                 id="email"
+                data-testid="login-email"
                 type="email"
                 value={email} 
                 onChange={e=>setEmail(e.target.value)}
@@ -95,6 +96,7 @@ export default function Login({onLogin, onSwitchToRegister}){
               <span className="input-icon">🔒</span>
               <input 
                 id="password"
+                data-testid="login-password"
                 type={showPassword ? "text" : "password"}
                 value={password} 
                 onChange={e=>setPassword(e.target.value)}
@@ -112,7 +114,7 @@ export default function Login({onLogin, onSwitchToRegister}){
             </div>
           </div>
 
-          <button type="submit" className="auth-button" disabled={loading}>
+          <button type="submit" className="auth-button" data-testid="login-submit" disabled={loading}>
             {loading ? t('loading') || 'Cargando...' : t('login')}
           </button>
           <button type="button" className="link-button" style={{marginTop: 8, marginBottom: 8}} onClick={() => setShowForgot(true)}>

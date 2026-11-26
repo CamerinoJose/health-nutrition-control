@@ -44,7 +44,7 @@ export default function Register({onRegistered, onSwitchToLogin}){
       </div>
       <div className="auth-right">
         <form onSubmit={submit} className="auth-form">
-          <h2>Crear Cuenta</h2>
+          <h2 data-testid="register-title">Crear Cuenta</h2>
           {err && <div className="auth-error">{err}</div>}
           
           <div className="input-group">

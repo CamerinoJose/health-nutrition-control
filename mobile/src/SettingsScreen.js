@@ -77,6 +77,7 @@ export default function SettingsScreen({ onNavigate, onLogout, onRefreshProfile,
           <Text style={styles.sectionTitle}>🌍 Idioma</Text>
           <View style={styles.languageButtons}>
             <TouchableOpacity
+              testID="settings-test-mode"
               style={[
                 styles.langBtn,
                 language === 'es' && styles.langBtnActive

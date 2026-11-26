@@ -16,6 +16,8 @@ ngrok.yml
 # Testing
 coverage/
 .nyc_output
+playwright-report/
+test-results/
 
 # Production builds
 dist/

@@ -1,0 +1,10 @@
+appId: com.bienestarappmobile
+---
+- launchApp
+- assertVisible: "BIENESTAR"
+- tapOn: "☰"
+- tapOn: "Ajustes"
+- tapOn:
+    id: "settings-test-mode"
+- assertVisible: "Modo de pruebas"
+- assertVisible: "Registrar una cuenta nueva"
