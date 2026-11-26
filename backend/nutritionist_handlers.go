@@ -638,11 +638,19 @@ func createMealPlanForPatientHandler(c *gin.Context) {
 	}
 
 	// Create meal plan
+	tx, err := db.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
+		return
+	}
+	defer tx.Rollback()
+
 	var planID int
-	err := queryRowDB(`
-		INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at)
-		VALUES (?, ?, ?, ?, ?) RETURNING id
-	`, patientID, req.Name, req.StartDate, req.Snacks, time.Now().Format("2006-01-02 15:04:05")).Scan(&planID)
+	err = tx.QueryRow(
+		rebindQuery(`INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at)
+			VALUES (?, ?, ?, ?, ?) RETURNING id`),
+		patientID, req.Name, req.StartDate, req.Snacks, time.Now().Format("2006-01-02 15:04:05"),
+	).Scan(&planID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error creating meal plan: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
@@ -651,14 +659,20 @@ func createMealPlanForPatientHandler(c *gin.Context) {
 
 	// Insert meals
 	for _, meal := range req.Meals {
-		_, err := execDB(`
-			INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, planID, meal.DayOfWeek, meal.MealType, meal.Name, meal.Ingredients, meal.Preparation)
-
+		_, err := tx.Exec(
+			rebindQuery(`INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation)
+				VALUES (?, ?, ?, ?, ?, ?)`),
+			planID, meal.DayOfWeek, meal.MealType, meal.Name, meal.Ingredients, meal.Preparation,
+		)
 		if err != nil {
 			log.Printf("[Nutritionist] Error creating meal: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
+			return
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
+		return
 	}
 
 	// Create notification for patient

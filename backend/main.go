@@ -1368,17 +1368,18 @@ func listMedicinesHandler(c *gin.Context) {
 	userID := getUserIDFromContext(c)
 	today := time.Now().Format("2006-01-02")
 	rows, err := queryDB(`
-		SELECT m.id, m.user_id, m.name, m.time, d.taken_at
+		SELECT m.id, m.user_id, m.name, m.time,
+		       (
+		         SELECT MAX(l.taken_at)
+		         FROM medicine_logs l
+		         WHERE l.user_id = m.user_id
+		         AND l.medicine_id = m.id
+		         AND l.taken_date = ?
+		       ) AS taken_at
 		FROM medicines m
-		LEFT JOIN (
-			SELECT medicine_id, MAX(taken_at) AS taken_at
-			FROM medicine_logs
-			WHERE user_id = ? AND taken_date = ?
-			GROUP BY medicine_id
-		) d ON d.medicine_id = m.id
 		WHERE m.user_id = ?
 		ORDER BY m.id DESC
-	`, userID, today, userID)
+	`, today, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al consultar medicinas"})
 		return
@@ -2148,15 +2149,19 @@ func uploadMealPlanHandler(c *gin.Context) {
 	log.Printf("[MealPlan] Extracted %d meals from PDF", len(meals))
 
 	planName := fmt.Sprintf("Plan %s", time.Now().Format("2006-01-02"))
+	tx, err := db.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
+		return
+	}
+	defer tx.Rollback()
+
 	var planID int
-	err = queryRowDB(
-		`INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at)
-		 VALUES (?, ?, ?, ?, ?) RETURNING id`,
-		claims.UserID,
-		planName,
-		time.Now().Format("2006-01-02"),
-		snacksText,
-		time.Now().Format(time.RFC3339),
+	err = tx.QueryRow(
+		rebindQuery(`INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at)
+		 VALUES (?, ?, ?, ?, ?) RETURNING id`),
+		claims.UserID, planName, time.Now().Format("2006-01-02"),
+		snacksText, time.Now().Format(time.RFC3339),
 	).Scan(&planID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
@@ -2164,11 +2169,19 @@ func uploadMealPlanHandler(c *gin.Context) {
 	}
 
 	for _, meal := range meals {
-		_, err = execDB(`INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation) VALUES (?, ?, ?, ?, ?, ?)`,
-			planID, meal.DayOfWeek, meal.MealType, meal.Name, meal.Ingredients, meal.Preparation)
+		_, err = tx.Exec(
+			rebindQuery(`INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation) VALUES (?, ?, ?, ?, ?, ?)`),
+			planID, meal.DayOfWeek, meal.MealType, meal.Name, meal.Ingredients, meal.Preparation,
+		)
 		if err != nil {
 			log.Printf("[MealPlan] Failed to insert meal: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save meal plan"})
+			return
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save meal plan"})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"plan_id": planID, "meals_count": len(meals)})
@@ -2227,8 +2240,13 @@ func createFoodLogHandler(c *gin.Context) {
 		return
 	}
 
-	_, err := execDB(`INSERT OR REPLACE INTO food_logs (user_id, date, meal_type, completed, notes) VALUES (?, ?, ?, ?, ?)`,
-		claims.UserID, req.Date, req.MealType, req.Completed, req.Notes)
+	_, err := execDB(`
+		INSERT INTO food_logs (user_id, date, meal_type, completed, notes)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(user_id, date, meal_type) DO UPDATE SET
+			completed = excluded.completed,
+			notes = excluded.notes
+	`, claims.UserID, req.Date, req.MealType, req.Completed, req.Notes)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save log"})
 		return

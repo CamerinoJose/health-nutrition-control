@@ -1,11 +1,12 @@
 import { vi } from 'vitest';
 
-// Mock localStorage
+// Mock localStorage with in-memory persistence for component tests
+const localStorageData = new Map();
 global.localStorage = {
-  getItem: vi.fn(),
-  setItem: vi.fn(),
-  removeItem: vi.fn(),
-  clear: vi.fn(),
+  getItem: vi.fn((key) => localStorageData.has(key) ? localStorageData.get(key) : null),
+  setItem: vi.fn((key, value) => localStorageData.set(key, String(value))),
+  removeItem: vi.fn((key) => localStorageData.delete(key)),
+  clear: vi.fn(() => localStorageData.clear()),
 };
 
 // Mock window.alert

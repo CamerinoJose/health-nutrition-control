@@ -33,6 +33,7 @@ import AppointmentsScreen from './src/AppointmentsScreen'
 import RecipesScreen from './src/RecipesScreen'
 import SettingsScreen from './src/SettingsScreen'
 import GeminiChatScreen from './src/GeminiChatScreen'
+import TestModeScreen from './src/TestModeScreen'
 import NutritionistSelectionScreen from './src/NutritionistSelectionScreen'
 import NutritionistPatientsScreen from './src/nutritionist/PatientsScreen'
 import NutritionistCalendarScreen from './src/nutritionist/CalendarScreen'
@@ -82,7 +83,7 @@ SplashScreen.preventAutoHideAsync().catch(err => {
 });
 
 export default function App() {
-  return <SafeAreaProvider><AppContent /><ReminderCenter /></SafeAreaProvider>;
+  return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
 }
 
 function AppContent() {
@@ -981,6 +982,10 @@ function AppContent() {
         return <SettingsScreen onNavigate={navigate} onLogout={handleLogout} onRefreshProfile={refreshProfile} profile={profile} />
       }
 
+      if (view === 'test-mode') {
+        return <TestModeScreen onNavigate={navigate} profile={profile} />
+      }
+
       if (view === 'nutritionist-selection') {
         return <NutritionistSelectionScreen onNavigate={navigate} onAssigned={refreshProfile} />
       }
@@ -1122,6 +1127,7 @@ function AppContent() {
         </TouchableOpacity>
       </View>
       {renderContent()}
+      <ReminderCenter hidden={view === 'medicinas' || view === 'diabetesNotifications'} />
       {/* Drawer lateral */}
       {drawerOpen && (
         <View style={styles.drawerOverlay}>

@@ -129,6 +129,13 @@ export default function SettingsScreen({ onNavigate, onLogout, onRefreshProfile,
           </View>
         </View>
 
+        <TouchableOpacity
+          style={styles.testModeBtn}
+          onPress={() => onNavigate('test-mode')}
+        >
+          <Text style={styles.testModeBtnText}>🧪 Modo de pruebas</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <Text style={styles.logoutBtnText}>🚪 Cerrar Sesión</Text>
         </TouchableOpacity>
@@ -242,6 +249,18 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'right',
     marginLeft: 10,
+  },
+  testModeBtn: {
+    backgroundColor: '#4f46e5',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  testModeBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
   logoutBtn: {
     backgroundColor: '#e74c3c',

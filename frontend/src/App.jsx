@@ -23,6 +23,7 @@ import GoogleCallback from './GoogleCallback'
 import ChooseNutritionist from './ChooseNutritionist'
 import BookAppointment from './BookAppointment'
 import api from './api'
+import TestMode from './TestMode'
 import { getToken, clearToken, saveToken, TOKEN_KEY } from './auth'
 import { initNotifications, requestNotificationPermission, scheduleMealReminders } from './notifications'
 
@@ -398,6 +399,7 @@ export default function App(){
             {view === 'diet' && <MealPlan />}
             {view === 'profile' && <Profile token={token} profile={profile} />}
             {view === 'settings' && <Settings profile={profile} onUpdate={setProfile} />}
+            {view === 'test-mode' && <TestMode profile={profile} />}
             {view === 'appointments' && <Appointments />}
             {view === 'choose-nutritionist' && (
               <ChooseNutritionist onNavigate={setView} onAssigned={async()=>{

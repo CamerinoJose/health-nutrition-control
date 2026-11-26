@@ -20,6 +20,7 @@ export default function Sidebar({ isOpen, onClose, onNavigate, currentView, onLo
     { id: 'whatsapp', icon: '📱', label: t('whatsappNutritionist') },
     { id: 'profile', icon: '👤', label: t('profile') },
     { id: 'settings', icon: '⚙️', label: t('settings') },
+    { id: 'test-mode', icon: '🧪', label: 'Modo de pruebas' },
     { id: 'support', icon: '❓', label: t('support') },
   ];
 
