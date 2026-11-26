@@ -121,6 +121,13 @@ jobs:
           java-version: 17
       - run: npm ci
       - run: |
+          keytool -genkeypair -v \
+            -keystore android/app/debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -keyalg RSA -keysize 2048 -validity 10000
           chmod +x android/gradlew
           android/gradlew -p android assembleDebug
       - uses: reactivecircus/android-emulator-runner@v2
