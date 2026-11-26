@@ -48,6 +48,71 @@ func TestOAuthLogsExcludeCredentialsAndLastTokenRoute(t *testing.T) {
 	}
 }
 
+func TestPostgresMealPlanReturningIDAssociatesMeals(t *testing.T) {
+	dsn := os.Getenv("MEDICINES_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("MEDICINES_TEST_POSTGRES_DSN is not set")
+	}
+	testDB, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = testDB.Close() })
+
+	if err := testDB.Ping(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := testDB.Exec(`CREATE TEMP TABLE meal_plans (
+		id SERIAL PRIMARY KEY,
+		user_id INTEGER,
+		name TEXT,
+		start_date TEXT,
+		snacks TEXT,
+		created_at TEXT
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testDB.Exec(`CREATE TEMP TABLE plan_meals (
+		id SERIAL PRIMARY KEY,
+		plan_id INTEGER,
+		day_of_week TEXT,
+		meal_type TEXT,
+		name TEXT,
+		ingredients TEXT,
+		preparation TEXT
+	)`); err != nil {
+		t.Fatal(err)
+	}
+
+	var planID int
+	err = testDB.QueryRow(`
+		INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at)
+		VALUES ($1, $2, $3, $4, $5) RETURNING id
+	`, 42, "Test plan", "2026-11-25", "Test snack", "2026-11-25").Scan(&planID)
+	if err != nil {
+		t.Fatalf("PostgreSQL RETURNING id failed: %v", err)
+	}
+	if planID <= 0 {
+		t.Fatalf("expected positive plan id, got %d", planID)
+	}
+
+	if _, err := testDB.Exec(`
+		INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, planID, "Lunes", "Desayuno", "Avena", "Avena", "Preparar"); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	if err := testDB.QueryRow(`SELECT COUNT(*) FROM plan_meals WHERE plan_id = $1`, planID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected meal associated with plan id %d, got %d", planID, count)
+	}
+}
+
 func TestMedicineCreationAndListWithBooleanTaken(t *testing.T) {
 	dsn := os.Getenv("MEDICINES_TEST_POSTGRES_DSN")
 	if dsn == "" {

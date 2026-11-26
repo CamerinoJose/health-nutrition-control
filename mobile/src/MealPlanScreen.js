@@ -25,6 +25,40 @@ import { getActiveAccountId } from './auth';
 const MEAL_REMINDER_IDS_KEY = 'bienestar_meal_reminder_ids_v1';
 const PENDING_MEAL_SETTINGS_KEY = 'bienestar_pending_meal_settings_v1';
 
+export function normalizeMealPlanLabel(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+export function findMealForDayAndType(meals, day, type) {
+  const normalizedDay = normalizeMealPlanLabel(day);
+  const normalizedType = normalizeMealPlanLabel(type);
+  const list = Array.isArray(meals) ? meals : [];
+  return list.find((meal) => {
+    const mealDay = normalizeMealPlanLabel(meal.day_of_week);
+    let mealType = normalizeMealPlanLabel(meal.meal_type);
+    if (mealType === 'almuerzo') mealType = 'comida';
+    return mealDay === normalizedDay && mealType === normalizedType;
+  });
+}
+
+export function buildMealUploadMessage(mealsCount) {
+  const count = Number(mealsCount || 0);
+  if (count === 0) {
+    return {
+      title: 'PDF cargado, pero sin comidas detectadas',
+      body: 'El PDF se recibió, pero el OCR no pudo identificar días y tipos de comida. Prueba un PDF con texto seleccionable o una imagen más legible.',
+    };
+  }
+  return {
+    title: '✅ Plan cargado',
+    body: `Se detectaron ${count} comida${count === 1 ? '' : 's'} en el PDF.`,
+  };
+}
+
 function isValidHHMM(str) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(str || ''));
 }
@@ -354,13 +388,15 @@ export default function MealPlanScreen({ onNavigate }) {
         type: asset.mimeType || 'application/pdf',
       });
 
-      await api.post('/meal-plan/upload', formData, {
+      const response = await api.post('/meal-plan/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
 
-      Alert.alert('✅ Listo', 'Plan PDF cargado correctamente.');
+      const mealsCount = Number(response?.data?.meals_count || 0);
+      const uploadMessage = buildMealUploadMessage(mealsCount);
+      Alert.alert(uploadMessage.title, uploadMessage.body);
       setLoading(true);
       await loadMealPlan();
     } catch (error) {
@@ -456,8 +492,7 @@ export default function MealPlanScreen({ onNavigate }) {
   };
 
   const getMealForDayAndType = (day, type) => {
-    const list = Array.isArray(meals) ? meals : [];
-    return list.find(m => m.day_of_week === day && m.meal_type === type);
+    return findMealForDayAndType(meals, day, type);
   };
 
   const getDateForDay = (dayName) => {
@@ -655,6 +690,21 @@ export default function MealPlanScreen({ onNavigate }) {
             <Text style={styles.planName}>{plan.name}</Text>
             <Text style={styles.planDate}>Desde: {plan.start_date}</Text>
           </View>
+          {!meals.length && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>El plan existe, pero no contiene comidas visibles</Text>
+              <Text style={styles.emptySubtext}>Actualiza o vuelve a subir el PDF para reconstruir el plan.</Text>
+              <TouchableOpacity
+                onPress={handleUploadPlanPdf}
+                style={[styles.uploadBtnLarge, uploading && styles.uploadBtnDisabled]}
+                disabled={uploading}
+              >
+                <Text style={styles.uploadBtnLargeText}>
+                  {uploading ? 'Subiendo…' : 'Actualizar Plan PDF'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.weeklyGrid}>

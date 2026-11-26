@@ -69,6 +69,7 @@ func resetPasswordHandler(c *gin.Context) {
 }
 
 var db *sql.DB
+
 func rebindQuery(query string) string {
 	var builder strings.Builder
 	placeholder := 1
@@ -2147,14 +2148,20 @@ func uploadMealPlanHandler(c *gin.Context) {
 	log.Printf("[MealPlan] Extracted %d meals from PDF", len(meals))
 
 	planName := fmt.Sprintf("Plan %s", time.Now().Format("2006-01-02"))
-	result, err := execDB(`INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at) VALUES (?, ?, ?, ?, ?)`,
-		claims.UserID, planName, time.Now().Format("2006-01-02"), snacksText, time.Now().Format(time.RFC3339))
+	var planID int
+	err = queryRowDB(
+		`INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at)
+		 VALUES (?, ?, ?, ?, ?) RETURNING id`,
+		claims.UserID,
+		planName,
+		time.Now().Format("2006-01-02"),
+		snacksText,
+		time.Now().Format(time.RFC3339),
+	).Scan(&planID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
 		return
 	}
-
-	planID, _ := result.LastInsertId()
 
 	for _, meal := range meals {
 		_, err = execDB(`INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation) VALUES (?, ?, ?, ?, ?, ?)`,

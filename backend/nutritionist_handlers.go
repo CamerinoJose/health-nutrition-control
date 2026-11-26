@@ -638,18 +638,16 @@ func createMealPlanForPatientHandler(c *gin.Context) {
 	}
 
 	// Create meal plan
-	result, err := execDB(`
+	var planID int
+	err := queryRowDB(`
 		INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, patientID, req.Name, req.StartDate, req.Snacks, time.Now().Format("2006-01-02 15:04:05"))
-
+		VALUES (?, ?, ?, ?, ?) RETURNING id
+	`, patientID, req.Name, req.StartDate, req.Snacks, time.Now().Format("2006-01-02 15:04:05")).Scan(&planID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error creating meal plan: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
 		return
 	}
-
-	planID, _ := result.LastInsertId()
 
 	// Insert meals
 	for _, meal := range req.Meals {
