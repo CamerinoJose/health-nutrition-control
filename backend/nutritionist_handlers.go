@@ -190,18 +190,16 @@ func createRecipeHandler(c *gin.Context) {
 		return
 	}
 
-	result, err := execDB(`
+	var recipeID int
+	err := queryRowDB(`
 		INSERT INTO recipes (name, category, prep_time, servings, calories, protein, carbs, fat, ingredients, instructions, image_url)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, req.Name, req.Category, req.PrepTime, req.Servings, req.Calories, req.Protein, req.Carbs, req.Fat, req.Ingredients, req.Instructions, req.ImageURL)
-
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, req.Name, req.Category, req.PrepTime, req.Servings, req.Calories, req.Protein, req.Carbs, req.Fat, req.Ingredients, req.Instructions, req.ImageURL).Scan(&recipeID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error creating recipe: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create recipe"})
 		return
 	}
-
-	recipeID, _ := result.LastInsertId()
 	c.JSON(http.StatusOK, gin.H{"id": recipeID, "message": "recipe created successfully"})
 }
 
@@ -284,18 +282,16 @@ func createRecommendationHandler(c *gin.Context) {
 		appointmentID = nil
 	}
 
-	result, err := execDB(`
+	var recommendationID int
+	err := queryRowDB(`
 		INSERT INTO recommendations (nutritionist_id, patient_id, appointment_id, recommendation_text, diet_changes, exercise_plan, next_goals, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, claims.UserID, req.PatientID, appointmentID, req.RecommendationText, req.DietChanges, req.ExercisePlan, req.NextGoals, time.Now().Format("2006-01-02 15:04:05"))
-
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, claims.UserID, req.PatientID, appointmentID, req.RecommendationText, req.DietChanges, req.ExercisePlan, req.NextGoals, time.Now().Format("2006-01-02 15:04:05")).Scan(&recommendationID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error creating recommendation: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create recommendation"})
 		return
 	}
-
-	recommendationID, _ := result.LastInsertId()
 
 	// Update appointment status if provided
 	if req.AppointmentID != nil && *req.AppointmentID > 0 {
@@ -462,18 +458,16 @@ func proposeAppointmentChangeHandler(c *gin.Context) {
 	}
 
 	// Create change proposal
-	result, err := execDB(`
+	var changeID int
+	err = queryRowDB(`
 		INSERT INTO appointment_changes (appointment_id, proposed_by, new_date, new_time, reason, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, appointmentID, claims.UserID, req.NewDate, req.NewTime, req.Reason, time.Now().Format("2006-01-02 15:04:05"))
-
+		VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+	`, appointmentID, claims.UserID, req.NewDate, req.NewTime, req.Reason, time.Now().Format("2006-01-02 15:04:05")).Scan(&changeID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error creating appointment change: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to propose change"})
 		return
 	}
-
-	changeID, _ := result.LastInsertId()
 
 	// Create notification for patient
 	execDB(`
@@ -579,7 +573,7 @@ func getAvailableSlotsHandler(c *gin.Context) {
 	rows, err := queryDB(`
 		SELECT start_time, end_time
 		FROM nutritionist_availability
-		WHERE nutritionist_id = ? AND day_of_week = ? AND is_available = 1
+		WHERE nutritionist_id = ? AND day_of_week = ? AND is_available = TRUE
 	`, claims.UserID, dayOfWeek)
 
 	if err != nil {

@@ -975,12 +975,13 @@ func registerHandler(c *gin.Context) {
 	}
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	res, err := execDB(`INSERT INTO users (name,email,password,role) VALUES (?,?,?,?)`, req.Name, req.Email, string(hash), "user")
+	var id int
+	err := queryRowDB(`INSERT INTO users (name,email,password,role) VALUES (?,?,?,?) RETURNING id`,
+		req.Name, req.Email, string(hash), "user").Scan(&id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no se pudo crear el usuario (email puede estar en uso)"})
 		return
 	}
-	id, _ := res.LastInsertId()
 	c.JSON(http.StatusOK, gin.H{"id": id, "email": req.Email})
 }
 
@@ -2930,30 +2931,28 @@ func createAppointmentHandler(c *gin.Context) {
 		return
 	}
 
-	result, err := execDB(`
+	var appointmentID int
+	err := queryRowDB(`
 		INSERT INTO appointments (user_id, nutritionist_id, title, description, appointment_date, appointment_time, status, notes, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
-	`, claims.UserID, nutritionistID.Int64, req.Title, req.Description, req.AppointmentDate, req.AppointmentTime, req.Notes, createdAt)
-
+		VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?, ?) RETURNING id
+	`, claims.UserID, nutritionistID.Int64, req.Title, req.Description, req.AppointmentDate, req.AppointmentTime, req.Notes, createdAt).Scan(&appointmentID)
 	if err != nil {
 		log.Printf("[Appointments] Error creating: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create appointment"})
 		return
 	}
 
-	id, _ := result.LastInsertId()
-
 	// Crear notificación para el usuario sobre su nueva cita
 	_, err = execDB(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, is_read, created_at)
 		VALUES (?, 'appointment', 'Nueva Cita Programada', ?, ?, 0, ?)
-	`, claims.UserID, fmt.Sprintf("Tienes una cita programada: %s el %s a las %s", req.Title, req.AppointmentDate, req.AppointmentTime), id, createdAt)
+	`, claims.UserID, fmt.Sprintf("Tienes una cita programada: %s el %s a las %s", req.Title, req.AppointmentDate, req.AppointmentTime), appointmentID, createdAt)
 
 	if err != nil {
 		log.Printf("[Appointments] Warning: Failed to create notification: %v", err)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"id": id, "ok": true})
+	c.JSON(http.StatusOK, gin.H{"id": appointmentID, "ok": true})
 }
 
 func getAppointmentsHandler(c *gin.Context) {
@@ -2962,19 +2961,20 @@ func getAppointmentsHandler(c *gin.Context) {
 	status := c.Query("status")
 	archived := c.Query("archived") // "true" to show archived, omit for active only
 
+	var archivedValue interface{} = false
 	query := `SELECT id, user_id, title, description, appointment_date, appointment_time, status, notes, created_at
 	          FROM appointments WHERE user_id = ? AND is_archived = ?`
-	args := []interface{}{claims.UserID, 0} // default: active only
+	args := []interface{}{claims.UserID, archivedValue} // default: active only
 
 	if archived == "true" {
 		// Show archived instead
 		query = `SELECT id, user_id, title, description, appointment_date, appointment_time, status, notes, created_at
 		          FROM appointments WHERE user_id = ? AND is_archived = ?`
-		args = []interface{}{claims.UserID, 1}
+		args = []interface{}{claims.UserID, true}
 	}
 
 	if month != "" {
-		query += " AND strftime('%Y-%m', appointment_date) = ?"
+		query += " AND substring(appointment_date from 1 for 7) = ?"
 		args = append(args, month)
 	}
 
@@ -3056,7 +3056,7 @@ func deleteAppointmentHandler(c *gin.Context) {
 	appointmentID := c.Param("id")
 
 	// Soft delete: mark as archived
-	_, err := execDB(`UPDATE appointments SET is_archived = 1 WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
+	_, err := execDB(`UPDATE appointments SET is_archived = TRUE WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
 
 	if err != nil {
 		log.Printf("[Appointments] Error archiving: %v", err)
@@ -3071,7 +3071,7 @@ func archiveAppointmentHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 	appointmentID := c.Param("id")
 
-	_, err := execDB(`UPDATE appointments SET is_archived = 1 WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
+	_, err := execDB(`UPDATE appointments SET is_archived = TRUE WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
 	if err != nil {
 		log.Printf("[Appointments] Error archiving: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to archive"})
@@ -3085,7 +3085,7 @@ func restoreAppointmentHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 	appointmentID := c.Param("id")
 
-	_, err := execDB(`UPDATE appointments SET is_archived = 0 WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
+	_, err := execDB(`UPDATE appointments SET is_archived = FALSE WHERE id = ? AND user_id = ?`, appointmentID, claims.UserID)
 	if err != nil {
 		log.Printf("[Appointments] Error restoring: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to restore"})
@@ -3415,18 +3415,16 @@ func sendMessageHandler(c *gin.Context) {
 		return
 	}
 
-	result, err := execDB(`
+	var messageID int
+	err := queryRowDB(`
 		INSERT INTO messages (sender_id, recipient_id, content, is_read, created_at)
-		VALUES (?, ?, ?, FALSE, CURRENT_TIMESTAMP)
-	`, claims.UserID, input.RecipientID, input.Content)
-
+		VALUES (?, ?, ?, FALSE, CURRENT_TIMESTAMP) RETURNING id
+	`, claims.UserID, input.RecipientID, input.Content).Scan(&messageID)
 	if err != nil {
 		log.Printf("[Messages] Error creating: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send message"})
 		return
 	}
-
-	messageID, _ := result.LastInsertId()
 
 	// Get sender name for notification
 	var senderName string
@@ -4132,5 +4130,54 @@ func assignNutritionistHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "nutritionist_id": req.NutritionistID})
 }
 func getAvailableSlotsForUserHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "getAvailableSlotsForUserHandler not implemented"})
+	claims := c.MustGet("claims").(*Claims)
+	dateStr := c.Query("date")
+	if dateStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "date parameter required"})
+		return
+	}
+	date, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid date format"})
+		return
+	}
+
+	var nutritionistID sql.NullInt64
+	if err := queryRowDB(`SELECT nutritionist_id FROM users WHERE id = ?`, claims.UserID).Scan(&nutritionistID); err != nil || !nutritionistID.Valid {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no nutritionist assigned"})
+		return
+	}
+
+	dayOfWeek := int(date.Weekday())
+	rows, err := queryDB(`
+		SELECT start_time, end_time
+		FROM nutritionist_availability
+		WHERE nutritionist_id = ? AND day_of_week = ? AND is_available = TRUE
+		ORDER BY start_time
+	`, nutritionistID.Int64, dayOfWeek)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch slots"})
+		return
+	}
+	defer rows.Close()
+
+	slots := []gin.H{}
+	for rows.Next() {
+		var startTime, endTime string
+		if err := rows.Scan(&startTime, &endTime); err != nil {
+			continue
+		}
+		var count int
+		_ = queryRowDB(`
+			SELECT COUNT(*)
+			FROM appointments
+			WHERE user_id = ? AND appointment_date = ? AND appointment_time = ? AND status != 'cancelled'
+		`, claims.UserID, dateStr, startTime).Scan(&count)
+		slots = append(slots, gin.H{
+			"start_time": startTime,
+			"end_time":   endTime,
+			"available":  count == 0,
+		})
+	}
+	c.JSON(http.StatusOK, slots)
 }

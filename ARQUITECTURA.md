@@ -1,5 +1,23 @@
 # 🏗️ ARQUITECTURA DEL PROYECTO
 
+## Dirección multifuncional de producto
+
+BienestarApp se organiza como una plataforma de salud con módulos compartidos
+por cuenta: perfil médico, contacto, alimentación, medicinas, indicadores,
+progreso, citas, mensajes, reportes y recordatorios. Android y web usan el
+mismo backend PostgreSQL; la información clínica debe mantenerse separada por
+usuario y disponibilidad profesional controlada por roles.
+
+Gemini es una asistencia informativa. No sustituye diagnóstico, dosis,
+decisiones médicas ni atención profesional.
+
+## Pruebas y continuidad
+
+El repositorio incluye pruebas unitarias, integración PostgreSQL, Playwright,
+Maestro y un modo de pruebas dentro de móvil/web. Cualquier conversación futura
+debe comenzar por `TAREAS_PENDIENTES.md`, revisar el estado de CI y seguir el
+orden maestro sin marcar tareas como completadas por implementaciones propuestas.
+
 ## Revisión automática
 
 GitHub Actions ejecuta `go vet`, las pruebas y la compilación del backend,
