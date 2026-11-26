@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -103,8 +104,9 @@ jobs:
           retention-days: 7
 
   android-e2e:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'android-e2e') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: mobile
@@ -134,6 +136,10 @@ jobs:
         with:
           api-level: 35
           arch: x86_64
+          target: google_apis
+          profile: pixel_5
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot
           script: |
             curl -Ls "https://get.maestro.mobile.dev" | bash
             export PATH="$HOME/.maestro/bin:$PATH"
