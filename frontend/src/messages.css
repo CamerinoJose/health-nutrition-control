@@ -39,6 +39,14 @@
   color: #333;
 }
 
+.messages-warning {
+  margin: 0;
+  padding: 12px 20px;
+  background: #fff3cd;
+  color: #664d03;
+  font-size: 14px;
+}
+
 .new-conversation-btn {
   padding: 8px 16px;
   background: linear-gradient(135deg, #9b59b6, #8e44ad);

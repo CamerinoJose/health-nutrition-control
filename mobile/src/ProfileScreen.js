@@ -4,15 +4,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from './api';
 import HealthProfileForm from './HealthProfileForm';
 import { getContactProfile, saveContactProfile } from './auth';
+import { ageFromBirthDate } from './age';
 
 const healthProfileStorageKey = (accountId) =>
   `bienestar_health_profile_v1:${accountId == null ? 'guest' : String(accountId)}`;
+const healthProfileDraftKey = (accountId) =>
+  `bienestar_health_profile_draft_v1:${String(accountId)}`;
 
 export default function ProfileScreen({ onNavigate, accountProfile, onAccountProfileUpdated }) {
   const healthProfileKey = healthProfileStorageKey(accountProfile?.user_id);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [draftProfile, setDraftProfile] = useState(null);
+  const [pendingDraft, setPendingDraft] = useState(false);
+  const [profileLoadError, setProfileLoadError] = useState(false);
+  const [profileOffline, setProfileOffline] = useState(false);
   const [accountName, setAccountName] = useState(accountProfile?.name || '');
   const [accountPhone, setAccountPhone] = useState(accountProfile?.phone || '');
   const [contactPreference, setContactPreference] = useState(accountProfile?.contact_preference || 'app');
@@ -36,6 +43,30 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
 
   const loadProfile = async () => {
     setLoading(true);
+    setPendingDraft(false);
+    setDraftProfile(null);
+    setProfileLoadError(false);
+    setProfileOffline(false);
+    try {
+      if (accountProfile?.user_id != null) {
+        const draftRaw = await AsyncStorage.getItem(healthProfileDraftKey(accountProfile.user_id));
+        if (draftRaw) {
+          const draft = JSON.parse(draftRaw);
+          if (!draft || typeof draft !== 'object' || Array.isArray(draft)) {
+            throw new Error('El borrador local del perfil no es válido.');
+          }
+          setProfile(draft);
+          setPendingDraft(true);
+          setLoading(false);
+          return;
+        }
+      }
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo leer el borrador local del perfil. Inténtalo de nuevo antes de editar.');
+      setProfileLoadError(true);
+      setLoading(false);
+      return;
+    }
     try {
       const res = await api.get('/health-profile');
 
@@ -51,23 +82,26 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
           await AsyncStorage.setItem(healthProfileKey, JSON.stringify(res.data));
         }
       } catch (_) {
-        // ignore
+        console.warn('No se pudo guardar la copia local del perfil.');
       }
     } catch (e) {
       try {
         const raw = await AsyncStorage.getItem(healthProfileKey);
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === 'object' && Object.prototype.hasOwnProperty.call(parsed, 'profile')) {
-            setProfile(parsed.profile);
+          const cached = parsed && typeof parsed === 'object' && Object.prototype.hasOwnProperty.call(parsed, 'profile')
+            ? parsed.profile : parsed;
+          if (cached && typeof cached === 'object' && !Array.isArray(cached)) {
+            setProfile(cached);
+            setProfileOffline(true);
           } else {
-            setProfile(parsed);
+            setProfileLoadError(true);
           }
         } else {
-          setProfile(null);
+          setProfileLoadError(true);
         }
       } catch (_) {
-        setProfile(null);
+        setProfileLoadError(true);
       }
     } finally {
       setLoading(false);
@@ -107,31 +141,52 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
   };
 
   const handleSave = async (data) => {
+    setDraftProfile(data);
     setLoading(true);
+    if (accountProfile?.user_id == null) {
+      Alert.alert('Error', 'No se pudo identificar la cuenta. Inicia sesión de nuevo antes de guardar el perfil.');
+      setLoading(false);
+      return;
+    }
+    const draftKey = healthProfileDraftKey(accountProfile.user_id);
     try {
+      await AsyncStorage.setItem(draftKey, JSON.stringify(data));
+      setPendingDraft(true);
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo conservar el borrador en este dispositivo. El perfil no se envió; inténtalo de nuevo.');
+      setLoading(false);
+      return;
+    }
+    try {
+      let saved;
       // Create vs update
       if (profile) {
         try {
-          await api.put('/health-profile', data);
+          saved = await api.put('/health-profile', data);
         } catch (err) {
           // If backend returns 404 because profile doesn't exist yet, fallback to create
           if (err?.response?.status === 404) {
-            await api.post('/health-profile', data);
+            saved = await api.post('/health-profile', data);
           } else {
             throw err;
           }
         }
       } else {
         try {
-          await api.post('/health-profile', data);
+          saved = await api.post('/health-profile', data);
         } catch (err) {
           // If it already exists, fallback to update
           if (err?.response?.status === 409) {
-            await api.put('/health-profile', data);
+            saved = await api.put('/health-profile', data);
           } else {
             throw err;
           }
         }
+      }
+
+      if (saved?.data?.birth_date !== data.birth_date) {
+        Alert.alert('Aviso', 'El servidor no confirmó la fecha de nacimiento. Actualiza el servicio antes de guardar el perfil.');
+        return;
       }
 
       const refreshed = await api.get('/health-profile');
@@ -139,26 +194,28 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
         ? refreshed.data.profile
         : refreshed.data;
 
+      if (!newProfile || newProfile.birth_date !== data.birth_date) {
+        throw new Error('El servidor no devolvió el perfil actualizado.');
+      }
+      await AsyncStorage.removeItem(draftKey);
       setProfile(newProfile);
+      setDraftProfile(null);
+      setPendingDraft(false);
+      setProfileOffline(false);
 
       try {
         await AsyncStorage.setItem(healthProfileKey, JSON.stringify(refreshed.data));
       } catch (_) {
-        // ignore
+        console.warn('No se pudo guardar la copia local del perfil.');
       }
 
       setEditing(false);
       Alert.alert('Éxito', 'Perfil guardado correctamente');
     } catch (e) {
-      // Offline/local fallback
       setProfile(data);
-      try {
-        await AsyncStorage.setItem(healthProfileKey, JSON.stringify(data));
-      } catch (_) {
-        // ignore
-      }
+      setDraftProfile(null);
       setEditing(false);
-      Alert.alert('Aviso', 'No se pudo guardar en el servidor. Se guardó localmente en este dispositivo.');
+      Alert.alert('Guardado pendiente', 'El borrador está en este dispositivo, pero no se confirmó en el servidor. Para reintentar, abre Editar y pulsa Guardar. Al hacerlo podrías reemplazar cambios de otro dispositivo.');
     } finally {
       setLoading(false);
     }
@@ -166,8 +223,16 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
 
   if (loading) return <ActivityIndicator size="large" style={{marginTop: 40}} />;
 
+  if (profileLoadError) {
+    return <View style={styles.container}>
+      <Text>No se pudo cargar el perfil o su borrador local.</Text>
+      <Button title="Reintentar" onPress={loadProfile} />
+      <Button title="Volver" onPress={() => onNavigate && onNavigate('home')} />
+    </View>;
+  }
+
   if (editing || !profile) {
-    return <HealthProfileForm initialData={profile} onSubmit={handleSave} />;
+    return <HealthProfileForm initialData={draftProfile || profile} onSubmit={handleSave} />;
   }
 
   return (
@@ -270,7 +335,9 @@ export default function ProfileScreen({ onNavigate, accountProfile, onAccountPro
         </View>
         
         <Text style={styles.subtitle}>Información del perfil</Text>
-      <Text>Edad: {profile.age}</Text>
+      {pendingDraft && <Text accessibilityRole="alert">Cambios pendientes: solo están en este dispositivo. Abre Editar y pulsa Guardar para reintentar; podrías reemplazar cambios hechos en otro dispositivo.</Text>}
+      {profileOffline && <Text accessibilityRole="alert">Copia local sin verificar: el perfil puede estar desactualizado.</Text>}
+      <Text>Edad: {profile.birth_date ? `${ageFromBirthDate(profile.birth_date) ?? 'No disponible'} años` : `${profile.age || 'No disponible'} (registrada; agrega tu fecha de nacimiento para actualizarla)`}</Text>
       <Text>Sexo: {profile.sex}</Text>
       <Text>Altura: {profile.height} cm</Text>
       <Text>Peso actual: {profile.current_weight} kg</Text>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import api from './api'
 import './admin.css'
@@ -33,6 +33,13 @@ export default function AdminPanel({ token }) {
   const [reportsLoading, setReportsLoading] = useState(false)
   const [reportsError, setReportsError] = useState(null)
   const [updatingReportId, setUpdatingReportId] = useState(null)
+  const [feedback, setFeedback] = useState([])
+  const [feedbackView, setFeedbackView] = useState('active')
+  const [feedbackNext, setFeedbackNext] = useState(0)
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
+  const [feedbackError, setFeedbackError] = useState(null)
+  const [updatingFeedbackId, setUpdatingFeedbackId] = useState(null)
+  const feedbackRequest = useRef(0)
   const canViewIndividualData = metrics?.can_view_individual_data === 1
 
   useEffect(() => {
@@ -79,6 +86,44 @@ export default function AdminPanel({ token }) {
     }
   }
 
+  async function loadFeedback(mode = 'active', after = 0) {
+    const requestId = ++feedbackRequest.current
+    setView('feedback')
+    setFeedbackView(mode)
+    setFeedbackLoading(true)
+    setFeedbackError(null)
+    if (!after) {
+      setFeedback([])
+      setFeedbackNext(0)
+    }
+    try {
+      const res = await api.get(`/admin/feedback?view=${mode}&after_id=${after}`)
+      if (!Array.isArray(res.data?.items) || !Number.isInteger(res.data?.next_after_id)) {
+        throw new Error('Invalid feedback response')
+      }
+      if (requestId !== feedbackRequest.current) return
+      setFeedback(previous => after ? [...previous, ...res.data.items] : res.data.items)
+      setFeedbackNext(res.data.next_after_id)
+    } catch {
+      if (requestId === feedbackRequest.current) setFeedbackError(t('feedbackLoadFailed'))
+    } finally {
+      if (requestId === feedbackRequest.current) setFeedbackLoading(false)
+    }
+  }
+
+  async function updateFeedback(id, status) {
+    setUpdatingFeedbackId(id)
+    setFeedbackError(null)
+    try {
+      await api.put(`/admin/feedback/${id}`, { status })
+      await loadFeedback(feedbackView)
+    } catch {
+      setFeedbackError(t('feedbackUpdateFailed'))
+    } finally {
+      setUpdatingFeedbackId(null)
+    }
+  }
+
   if (loading) return <div className="admin-panel">{t('loading')}</div>
   if (error) return <div className="admin-panel"><p className="error">{error}</p></div>
 
@@ -98,6 +143,9 @@ export default function AdminPanel({ token }) {
         </button>
         <button className={view === 'gemini-reports' ? 'active' : ''} onClick={showGeminiReports}>
           Reportes de Gemini
+        </button>
+        <button className={view === 'feedback' ? 'active' : ''} onClick={() => loadFeedback()}>
+          {t('feedbackQueue')}
         </button>
       </div>
 
@@ -207,6 +255,43 @@ export default function AdminPanel({ token }) {
               </table>
             </div>
           )}
+        </div>
+      )}
+      {view === 'feedback' && (
+        <div className="admin-section">
+          <h3>{t('feedbackQueue')}</h3>
+          <p className="admin-privacy-note">{t('feedbackPrivacy')}</p>
+          <button disabled={feedbackLoading} onClick={() => loadFeedback('active')}>{t('feedbackActive')}</button>
+          <button disabled={feedbackLoading} onClick={() => loadFeedback('resolved')}>{t('feedbackResolved')}</button>
+          {feedbackError && <p className="error" role="alert">{feedbackError}</p>}
+          {feedbackLoading && <p role="status">{t('feedbackLoading')}</p>}
+          {!feedbackLoading && !feedbackError && feedback.length === 0 && <p>{t('feedbackEmpty')}</p>}
+          {feedback.length > 0 && (
+            <div className="reports-table">
+              <table>
+                <thead>
+                  <tr><th>ID</th><th>{t('date')}</th><th>{t('subject')}</th><th>{t('message')}</th><th>{t('status')}</th><th>{t('actions')}</th></tr>
+                </thead>
+                <tbody>
+                  {feedback.map(item => (
+                    <tr key={item.id}>
+                      <td>{item.id}</td>
+                      <td>{new Date(item.created_at).toLocaleString()}</td>
+                      <td>{item.subject}</td>
+                      <td className="report-content">{item.message}</td>
+                      <td>{t(item.status === 'pending' ? 'feedbackPendingStatus' : item.status === 'in_progress' ? 'feedbackProgressStatus' : 'feedbackResolvedStatus')}</td>
+                      <td>
+                        {item.status === 'pending' && <button className="action-btn" disabled={updatingFeedbackId !== null} onClick={() => updateFeedback(item.id, 'in_progress')}>{t('feedbackStart')}</button>}
+                        {item.status !== 'resolved' && <button className="action-btn" disabled={updatingFeedbackId !== null} onClick={() => updateFeedback(item.id, 'resolved')}>{t('feedbackComplete')}</button>}
+                        {item.status === 'resolved' && <button className="action-btn" disabled={updatingFeedbackId !== null} onClick={() => updateFeedback(item.id, 'in_progress')}>{t('feedbackReopen')}</button>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {feedbackNext > 0 && <button disabled={feedbackLoading} onClick={() => loadFeedback(feedbackView, feedbackNext)}>{t('feedbackMore')}</button>}
         </div>
       )}
     </div>

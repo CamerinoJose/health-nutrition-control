@@ -10,6 +10,7 @@ import {
   Alert
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import api from './api';
 
 export default function SupportScreen({ onNavigate }) {
   const { t } = useTranslation();
@@ -18,6 +19,7 @@ export default function SupportScreen({ onNavigate }) {
     subject: '',
     message: ''
   });
+  const [submitting, setSubmitting] = useState(false);
 
   const faqs = [
     {
@@ -42,14 +44,26 @@ export default function SupportScreen({ onNavigate }) {
     }
   ];
 
-  const handleContactSubmit = () => {
-    if (!contactForm.subject || !contactForm.message) {
-      Alert.alert('Error', 'Completa todos los campos');
+  const handleContactSubmit = async () => {
+    const subject = contactForm.subject.trim();
+    const message = contactForm.message.trim();
+    if (!subject || !message) {
+      Alert.alert('Error', t('feedbackRequired'));
       return;
     }
-
-    Alert.alert('Enviado', 'Tu mensaje ha sido enviado. Te responderemos pronto.');
-    setContactForm({ subject: '', message: '' });
+    setSubmitting(true);
+    try {
+      const res = await api.post('/feedback', { subject, message });
+      if (res.status !== 201 || !Number.isInteger(res.data?.id) || res.data.id <= 0 || res.data.status !== 'pending') {
+        throw new Error('Feedback was not confirmed');
+      }
+      setContactForm({ subject: '', message: '' });
+      Alert.alert(t('feedbackTitle'), t('feedbackSent'));
+    } catch {
+      Alert.alert('Error', t('feedbackFailed'));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -88,40 +102,30 @@ export default function SupportScreen({ onNavigate }) {
             <Text style={styles.contactIcon}>📧</Text>
             <View>
               <Text style={styles.contactLabel}>Email</Text>
-              <Text style={styles.contactValue}>soporte@bienestar.com</Text>
-            </View>
-          </View>
-          <View style={styles.contactItem}>
-            <Text style={styles.contactIcon}>📱</Text>
-            <View>
-              <Text style={styles.contactLabel}>WhatsApp</Text>
-              <Text style={styles.contactValue}>+52 123 456 7890</Text>
-            </View>
-          </View>
-          <View style={styles.contactItem}>
-            <Text style={styles.contactIcon}>⏰</Text>
-            <View>
-              <Text style={styles.contactLabel}>Horario</Text>
-              <Text style={styles.contactValue}>Lun - Vie: 9:00 - 18:00</Text>
+              <Text style={styles.contactValue}>healthnutritioncontrol@gmail.com</Text>
             </View>
           </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>✉️ Enviar Mensaje</Text>
+          <Text style={styles.sectionTitle}>✉️ {t('feedbackTitle')}</Text>
+          <Text>{t('feedbackPrivacy')}</Text>
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Asunto</Text>
+            <Text style={styles.label}>{t('subject')}</Text>
             <TextInput
+              accessibilityLabel={t('subject')}
               style={styles.input}
               placeholder="¿En qué podemos ayudarte?"
               value={contactForm.subject}
               onChangeText={text => setContactForm({ ...contactForm, subject: text })}
               placeholderTextColor="#999"
+              maxLength={120}
             />
           </View>
           <View style={styles.formGroup}>
-            <Text style={styles.label}>Mensaje</Text>
+            <Text style={styles.label}>{t('message')}</Text>
             <TextInput
+              accessibilityLabel={t('message')}
               style={[styles.input, styles.textarea]}
               placeholder="Describe tu problema o pregunta..."
               value={contactForm.message}
@@ -130,10 +134,11 @@ export default function SupportScreen({ onNavigate }) {
               numberOfLines={5}
               placeholderTextColor="#999"
               textAlignVertical="top"
+              maxLength={2000}
             />
           </View>
-          <TouchableOpacity style={styles.submitBtn} onPress={handleContactSubmit}>
-            <Text style={styles.submitBtnText}>Enviar Mensaje</Text>
+          <TouchableOpacity style={styles.submitBtn} onPress={handleContactSubmit} disabled={submitting}>
+            <Text style={styles.submitBtnText}>{submitting ? t('feedbackSending') : t('feedbackSubmit')}</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

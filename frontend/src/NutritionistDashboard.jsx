@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ageFromBirthDate } from './age';
 import { getPatients, getPatientDetails, getPatientHistory, getNutritionistAppointments, 
          updateAppointmentNotes, createRecommendation, getRecommendations,
          getRecipes, createRecipe, updateRecipe, deleteRecipe, proposeAppointmentChange, sendMessageToPatient } from './api';
@@ -470,7 +471,7 @@ Email: ${reportData.email}
 Fecha del Reporte: ${reportData.fecha_reporte}
 
 --- PERFIL DE SALUD ---
-Edad: ${reportData.perfil.age || 'N/A'} años
+Edad: ${reportData.perfil.birth_date ? (ageFromBirthDate(reportData.perfil.birth_date) ?? 'N/A') : (reportData.perfil.age || 'N/A')} años${!reportData.perfil.birth_date ? ' (registrada)' : ''}
 Sexo: ${reportData.perfil.sex || 'N/A'}
 Altura: ${reportData.perfil.height || 'N/A'} cm
 Peso Actual: ${reportData.perfil.weight || 'N/A'} kg
@@ -691,7 +692,7 @@ Fin del Reporte
                   <h3>Información General</h3>
                   <div className="info-grid">
                     <div><strong>Email:</strong> {patientDetails.email}</div>
-                    <div><strong>Edad:</strong> {patientDetails.health_profile?.age || 'N/A'} años</div>
+                    <div><strong>Edad:</strong> {patientDetails.health_profile?.birth_date ? (ageFromBirthDate(patientDetails.health_profile.birth_date) ?? 'N/A') : (patientDetails.health_profile?.age || 'N/A')} años{!patientDetails.health_profile?.birth_date && ' (registrada)'}</div>
                     <div><strong>Sexo:</strong> {patientDetails.health_profile?.sex || 'N/A'}</div>
                     <div><strong>Altura:</strong> {patientDetails.health_profile?.height || 'N/A'} cm</div>
                     <div><strong>Peso Actual:</strong> {patientDetails.health_profile?.weight || 'N/A'} kg</div>

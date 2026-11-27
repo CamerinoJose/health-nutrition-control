@@ -10,16 +10,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// listPatientsHandler returns all patients (users with role 'user')
+// listPatientsHandler returns patients assigned to the current nutritionist.
 func listPatientsHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+	if claims.Role != "nutritionist" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "clinical access requires the assigned nutritionist"})
+		return
+	}
 	rows, err := queryDB(`
 		SELECT u.id, u.name, u.email, u.role,
 			(SELECT COUNT(*) FROM appointments WHERE user_id = u.id) as appointment_count,
 			(SELECT MAX(date) FROM histories WHERE user_id = u.id) as last_visit
 		FROM users u
-		WHERE u.role = 'user'
+		WHERE u.role = 'user' AND u.nutritionist_id = ?
+			AND EXISTS (SELECT 1 FROM users n WHERE n.id = ? AND n.role = 'nutritionist')
 		ORDER BY u.name
-	`)
+	`, claims.UserID, claims.UserID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error fetching patients: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch patients"})
@@ -35,7 +41,9 @@ func listPatientsHandler(c *gin.Context) {
 		var lastVisit sql.NullString
 
 		if err := rows.Scan(&id, &name, &email, &role, &appointmentCount, &lastVisit); err != nil {
-			continue
+			log.Printf("[Nutritionist] Error scanning patient: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch patients"})
+			return
 		}
 
 		patients = append(patients, map[string]interface{}{
@@ -48,63 +56,85 @@ func listPatientsHandler(c *gin.Context) {
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch patients"})
+		return
+	}
 	c.JSON(http.StatusOK, patients)
 }
 
 // getPatientDetailsHandler returns full details of a specific patient
 func getPatientDetailsHandler(c *gin.Context) {
 	patientID := c.Param("id")
+	tx, allowed := beginPatientAccess(c, patientID)
+	if !allowed {
+		return
+	}
+	defer tx.Rollback()
 
 	var id int
 	var name, email, role string
-	err := queryRowDB(`SELECT id, name, email, role FROM users WHERE id = ?`, patientID).
+	err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`SELECT id, name, email, role FROM users WHERE id = ?`), patientID).
 		Scan(&id, &name, &email, &role)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "patient not found"})
+		log.Printf("[Nutritionist] Error fetching patient: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch patient"})
 		return
 	}
 
 	// Get health profile
 	var profileData map[string]interface{}
 	var age sql.NullInt64
-	var height, weight, targetWeight, fatPercentage, musclePercentage sql.NullFloat64
-	var sex, medicalConditions, medications, allergies, activityLevel, goals sql.NullString
+	var height, weight, targetWeight sql.NullFloat64
+	var birthDate, sex, medicalConditions, medications, allergies, activityLevel, goals sql.NullString
 
-	err = queryRowDB(`
-		SELECT age, sex, height, weight, target_weight, fat_percentage, muscle_percentage,
+	err = tx.QueryRowContext(c.Request.Context(), rebindQuery(`
+		SELECT age, birth_date, sex, height, current_weight, goal_weight,
 			medical_conditions, medications, allergies, activity_level, goals
 		FROM health_profiles WHERE user_id = ?
-	`, patientID).Scan(&age, &sex, &height, &weight, &targetWeight, &fatPercentage,
-		&musclePercentage, &medicalConditions, &medications, &allergies, &activityLevel, &goals)
+	`), patientID).Scan(&age, &birthDate, &sex, &height, &weight, &targetWeight,
+		&medicalConditions, &medications, &allergies, &activityLevel, &goals)
 
 	if err == nil {
+		if birthDate.Valid {
+			calculatedAge, ageErr := ageFromBirthDate(birthDate.String, time.Now())
+			if ageErr != nil {
+				log.Printf("[Nutritionist] Invalid stored birth date for patient %s", patientID)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid stored birth date"})
+				return
+			}
+			age.Int64 = int64(calculatedAge)
+		}
 		profileData = map[string]interface{}{
 			"age":                age.Int64,
+			"birth_date":         birthDate.String,
 			"sex":                sex.String,
 			"height":             height.Float64,
 			"weight":             weight.Float64,
 			"target_weight":      targetWeight.Float64,
-			"fat_percentage":     fatPercentage.Float64,
-			"muscle_percentage":  musclePercentage.Float64,
 			"medical_conditions": medicalConditions.String,
 			"medications":        medications.String,
 			"allergies":          allergies.String,
 			"activity_level":     activityLevel.String,
 			"goals":              goals.String,
 		}
+	} else if err != sql.ErrNoRows {
+		log.Printf("[Nutritionist] Error fetching patient health profile: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch patient health profile"})
+		return
 	}
 
 	// Get latest history entry
 	var latestHistory map[string]interface{}
 	var histDate string
 	var histWeight, histFat, histMuscle float64
-	err = queryRowDB(`
+	err = tx.QueryRowContext(c.Request.Context(), rebindQuery(`
 		SELECT date, weight, fat_percentage, muscle_percentage 
 		FROM histories 
 		WHERE user_id = ? 
 		ORDER BY date DESC LIMIT 1
-	`, patientID).Scan(&histDate, &histWeight, &histFat, &histMuscle)
+	`), patientID).Scan(&histDate, &histWeight, &histFat, &histMuscle)
 
 	if err == nil {
 		latestHistory = map[string]interface{}{
@@ -113,12 +143,22 @@ func getPatientDetailsHandler(c *gin.Context) {
 			"fat_percentage":    histFat,
 			"muscle_percentage": histMuscle,
 		}
+	} else if err != sql.ErrNoRows {
+		log.Printf("[Nutritionist] Error fetching latest patient history: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch patient history"})
+		return
 	}
 
 	// Get appointment count
 	var appointmentCount int
-	queryRowDB(`SELECT COUNT(*) FROM appointments WHERE user_id = ?`, patientID).Scan(&appointmentCount)
+	if err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`SELECT COUNT(*) FROM appointments WHERE user_id = ?`), patientID).Scan(&appointmentCount); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch patient appointments"})
+		return
+	}
 
+	if !commitClinicalAccess(c, tx) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"id":                id,
 		"name":              name,
@@ -133,13 +173,18 @@ func getPatientDetailsHandler(c *gin.Context) {
 // getPatientHistoryHandler returns all history entries for a patient
 func getPatientHistoryHandler(c *gin.Context) {
 	patientID := c.Param("id")
+	tx, allowed := beginPatientAccess(c, patientID)
+	if !allowed {
+		return
+	}
+	defer tx.Rollback()
 
-	rows, err := queryDB(`
+	rows, err := tx.QueryContext(c.Request.Context(), rebindQuery(`
 		SELECT id, date, weight, fat_percentage, muscle_percentage
 		FROM histories
 		WHERE user_id = ?
 		ORDER BY date DESC
-	`, patientID)
+	`), patientID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch history"})
@@ -154,7 +199,9 @@ func getPatientHistoryHandler(c *gin.Context) {
 		var weight, fat, muscle float64
 
 		if err := rows.Scan(&id, &date, &weight, &fat, &muscle); err != nil {
-			continue
+			log.Printf("[Nutritionist] Error scanning history: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch history"})
+			return
 		}
 
 		history = append(history, map[string]interface{}{
@@ -166,6 +213,14 @@ func getPatientHistoryHandler(c *gin.Context) {
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch history"})
+		return
+	}
+	rows.Close()
+	if !commitClinicalAccess(c, tx) {
+		return
+	}
 	c.JSON(http.StatusOK, history)
 }
 
@@ -274,19 +329,37 @@ func createRecommendationHandler(c *gin.Context) {
 		return
 	}
 
+	tx, allowed := beginPatientAccess(c, fmt.Sprint(req.PatientID))
+	if !allowed {
+		return
+	}
+	defer tx.Rollback()
+
 	// Handle optional appointment_id
 	var appointmentID interface{}
 	if req.AppointmentID != nil && *req.AppointmentID > 0 {
+		var found int
+		err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`
+			SELECT id FROM appointments WHERE id = ? AND user_id = ? AND nutritionist_id = ? FOR UPDATE
+		`), *req.AppointmentID, req.PatientID, claims.UserID).Scan(&found)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(http.StatusNotFound, gin.H{"error": "appointment not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify appointment"})
+			}
+			return
+		}
 		appointmentID = *req.AppointmentID
 	} else {
 		appointmentID = nil
 	}
 
 	var recommendationID int
-	err := queryRowDB(`
+	err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`
 		INSERT INTO recommendations (nutritionist_id, patient_id, appointment_id, recommendation_text, diet_changes, exercise_plan, next_goals, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, claims.UserID, req.PatientID, appointmentID, req.RecommendationText, req.DietChanges, req.ExercisePlan, req.NextGoals, time.Now().Format("2006-01-02 15:04:05")).Scan(&recommendationID)
+	`), claims.UserID, req.PatientID, appointmentID, req.RecommendationText, req.DietChanges, req.ExercisePlan, req.NextGoals, time.Now().Format("2006-01-02 15:04:05")).Scan(&recommendationID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error creating recommendation: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create recommendation"})
@@ -295,17 +368,28 @@ func createRecommendationHandler(c *gin.Context) {
 
 	// Update appointment status if provided
 	if req.AppointmentID != nil && *req.AppointmentID > 0 {
-		execDB(`UPDATE appointments SET status = 'completed' WHERE id = ?`, *req.AppointmentID)
+		if _, err := tx.ExecContext(c.Request.Context(), rebindQuery(`UPDATE appointments SET status = 'completed' WHERE id = ?`), *req.AppointmentID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update appointment"})
+			return
+		}
 	}
 
+	if !commitClinicalAccess(c, tx) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"id": recommendationID, "message": "recommendation created successfully"})
 }
 
 // getRecommendationsHandler gets all recommendations for a patient
 func getRecommendationsHandler(c *gin.Context) {
 	patientID := c.Param("patient_id")
+	tx, allowed := beginPatientAccess(c, patientID)
+	if !allowed {
+		return
+	}
+	defer tx.Rollback()
 
-	rows, err := queryDB(`
+	rows, err := tx.QueryContext(c.Request.Context(), rebindQuery(`
 		SELECT r.id, r.nutritionist_id, r.appointment_id, r.recommendation_text, 
 			r.diet_changes, r.exercise_plan, r.next_goals, r.created_at,
 			u.name as nutritionist_name
@@ -313,7 +397,7 @@ func getRecommendationsHandler(c *gin.Context) {
 		LEFT JOIN users u ON u.id = r.nutritionist_id
 		WHERE r.patient_id = ?
 		ORDER BY r.created_at DESC
-	`, patientID)
+	`), patientID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch recommendations"})
@@ -328,7 +412,9 @@ func getRecommendationsHandler(c *gin.Context) {
 		var recommendationText, dietChanges, exercisePlan, nextGoals, createdAt, nutritionistName string
 
 		if err := rows.Scan(&id, &nutritionistID, &appointmentID, &recommendationText, &dietChanges, &exercisePlan, &nextGoals, &createdAt, &nutritionistName); err != nil {
-			continue
+			log.Printf("[Nutritionist] Error scanning recommendation: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch recommendations"})
+			return
 		}
 
 		recommendation := map[string]interface{}{
@@ -351,21 +437,34 @@ func getRecommendationsHandler(c *gin.Context) {
 		recommendations = append(recommendations, recommendation)
 	}
 
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch recommendations"})
+		return
+	}
+	rows.Close()
+	if !commitClinicalAccess(c, tx) {
+		return
+	}
 	c.JSON(http.StatusOK, recommendations)
 }
 
 // getNutritionistAppointmentsHandler gets all appointments for the nutritionist
 func getNutritionistAppointmentsHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
+	if claims.Role != "nutritionist" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "clinical access requires the assigned nutritionist"})
+		return
+	}
 
 	rows, err := queryDB(`
 		SELECT a.id, a.user_id, u.name as patient_name, a.title, a.description, 
 			a.appointment_date, a.appointment_time, a.status, a.notes, a.created_at
 		FROM appointments a
-		LEFT JOIN users u ON u.id = a.user_id
-		WHERE a.nutritionist_id = ?
+		JOIN users u ON u.id = a.user_id
+		JOIN users n ON n.id = u.nutritionist_id
+		WHERE a.nutritionist_id = ? AND u.role = 'user' AND n.id = ? AND n.role = 'nutritionist'
 		ORDER BY a.appointment_date ASC, a.appointment_time ASC
-	`, claims.UserID)
+	`, claims.UserID, claims.UserID)
 
 	if err != nil {
 		log.Printf("[Nutritionist] Error fetching appointments: %v", err)
@@ -380,7 +479,9 @@ func getNutritionistAppointmentsHandler(c *gin.Context) {
 		var patientName, title, description, appointmentDate, appointmentTime, status, notes, createdAt string
 
 		if err := rows.Scan(&id, &userID, &patientName, &title, &description, &appointmentDate, &appointmentTime, &status, &notes, &createdAt); err != nil {
-			continue
+			log.Printf("[Nutritionist] Error scanning appointment: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch appointments"})
+			return
 		}
 
 		appointments = append(appointments, map[string]interface{}{
@@ -397,10 +498,10 @@ func getNutritionistAppointmentsHandler(c *gin.Context) {
 		})
 	}
 
-	// If role is admin, return all appointments
-	// If role is nutritionist, we could filter by nutritionist_id if we had that field
-	_ = claims // For future use
-
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch appointments"})
+		return
+	}
 	c.JSON(http.StatusOK, appointments)
 }
 
@@ -418,11 +519,16 @@ func updateAppointmentNotesHandler(c *gin.Context) {
 		return
 	}
 
-	_, err := execDB(`
+	tx, _, allowed := beginAppointmentAccess(c, appointmentID)
+	if !allowed {
+		return
+	}
+	defer tx.Rollback()
+	_, err := tx.ExecContext(c.Request.Context(), rebindQuery(`
 		UPDATE appointments 
 		SET notes = ?, status = ?
 		WHERE id = ?
-	`, req.Notes, req.Status, appointmentID)
+	`), req.Notes, req.Status, appointmentID)
 
 	if err != nil {
 		log.Printf("[Nutritionist] Error updating appointment: %v", err)
@@ -430,6 +536,9 @@ func updateAppointmentNotesHandler(c *gin.Context) {
 		return
 	}
 
+	if !commitClinicalAccess(c, tx) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "appointment updated successfully"})
 }
 
@@ -449,31 +558,36 @@ func proposeAppointmentChangeHandler(c *gin.Context) {
 		return
 	}
 
-	// Get appointment details to find patient
-	var userID int
-	err := queryRowDB(`SELECT user_id FROM appointments WHERE id = ?`, appointmentID).Scan(&userID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "appointment not found"})
+	tx, userID, allowed := beginAppointmentAccess(c, appointmentID)
+	if !allowed {
 		return
 	}
+	defer tx.Rollback()
 
 	// Create change proposal
 	var changeID int
-	err = queryRowDB(`
+	err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`
 		INSERT INTO appointment_changes (appointment_id, proposed_by, new_date, new_time, reason, created_at)
 		VALUES (?, ?, ?, ?, ?, ?) RETURNING id
-	`, appointmentID, claims.UserID, req.NewDate, req.NewTime, req.Reason, time.Now().Format("2006-01-02 15:04:05")).Scan(&changeID)
+	`), appointmentID, claims.UserID, req.NewDate, req.NewTime, req.Reason, time.Now().Format("2006-01-02 15:04:05")).Scan(&changeID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error creating appointment change: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to propose change"})
 		return
 	}
 
-	// Create notification for patient
-	execDB(`
+	_, err = tx.ExecContext(c.Request.Context(), rebindQuery(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, created_at)
 		VALUES (?, 'appointment_change', 'Cambio de Cita Propuesto', ?, ?, ?)
-	`, userID, "Tu nutrióloga ha propuesto un cambio en tu cita. Por favor revisa y confirma.", changeID, time.Now().Format("2006-01-02 15:04:05"))
+	`), userID, "Tu nutrióloga ha propuesto un cambio en tu cita. Por favor revisa y confirma.", changeID, time.Now().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		log.Printf("[Nutritionist] Error creating appointment notification: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to propose change"})
+		return
+	}
+	if !commitClinicalAccess(c, tx) {
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":      changeID,
@@ -631,16 +745,14 @@ func createMealPlanForPatientHandler(c *gin.Context) {
 		return
 	}
 
-	// Create meal plan
-	tx, err := db.Begin()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
+	tx, allowed := beginPatientAccess(c, patientID)
+	if !allowed {
 		return
 	}
 	defer tx.Rollback()
 
 	var planID int
-	err = tx.QueryRow(
+	err := tx.QueryRow(
 		rebindQuery(`INSERT INTO meal_plans (user_id, name, start_date, snacks, created_at)
 			VALUES (?, ?, ?, ?, ?) RETURNING id`),
 		patientID, req.Name, req.StartDate, req.Snacks, time.Now().Format("2006-01-02 15:04:05"),
@@ -664,19 +776,18 @@ func createMealPlanForPatientHandler(c *gin.Context) {
 			return
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	_, err = tx.ExecContext(c.Request.Context(), rebindQuery(`
+		INSERT INTO notifications (user_id, type, title, message, related_id, is_read, created_at)
+		VALUES (?, 'meal_plan', 'Nuevo Plan de Comidas', ?, ?, FALSE, ?)
+	`), patientID, fmt.Sprintf("Tu nutrióloga ha creado un nuevo plan de comidas: %s", req.Name), planID, time.Now().Format("2006-01-02 15:04:05"))
+
+	if err != nil {
+		log.Printf("[Nutritionist] Error creating meal plan notification: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
 		return
 	}
-
-	// Create notification for patient
-	_, err = execDB(`
-		INSERT INTO notifications (user_id, type, title, message, related_id, is_read, created_at)
-		VALUES (?, 'meal_plan', 'Nuevo Plan de Comidas', ?, ?, 0, ?)
-	`, patientID, fmt.Sprintf("Tu nutrióloga ha creado un nuevo plan de comidas: %s", req.Name), planID, time.Now().Format("2006-01-02 15:04:05"))
-
-	if err != nil {
-		log.Printf("[Nutritionist] Warning: Failed to create notification: %v", err)
+	if !commitClinicalAccess(c, tx) {
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -688,6 +799,11 @@ func createMealPlanForPatientHandler(c *gin.Context) {
 // getPatientMealPlanHandler gets the current meal plan for a patient
 func getPatientMealPlanHandler(c *gin.Context) {
 	patientID := c.Param("id")
+	tx, allowed := beginPatientAccess(c, patientID)
+	if !allowed {
+		return
+	}
+	defer tx.Rollback()
 
 	var plan struct {
 		ID        int    `json:"id"`
@@ -698,21 +814,25 @@ func getPatientMealPlanHandler(c *gin.Context) {
 		CreatedAt string `json:"created_at"`
 	}
 
-	err := queryRowDB(`
+	err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`
 		SELECT id, user_id, name, start_date, snacks, created_at 
 		FROM meal_plans 
 		WHERE user_id = ? 
 		ORDER BY created_at DESC 
 		LIMIT 1
-	`, patientID).Scan(&plan.ID, &plan.UserID, &plan.Name, &plan.StartDate, &plan.Snacks, &plan.CreatedAt)
+	`), patientID).Scan(&plan.ID, &plan.UserID, &plan.Name, &plan.StartDate, &plan.Snacks, &plan.CreatedAt)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no meal plan found"})
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "no meal plan found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch meal plan"})
+		}
 		return
 	}
 
 	// Get meals
-	rows, err := queryDB(`
+	rows, err := tx.QueryContext(c.Request.Context(), rebindQuery(`
 		SELECT id, plan_id, day_of_week, meal_type, name, ingredients, preparation
 		FROM plan_meals
 		WHERE plan_id = ?
@@ -731,7 +851,7 @@ func getPatientMealPlanHandler(c *gin.Context) {
 				WHEN 'Almuerzo' THEN 2
 				WHEN 'Cena' THEN 3
 			END
-	`, plan.ID)
+	`), plan.ID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch meals"})
@@ -745,7 +865,9 @@ func getPatientMealPlanHandler(c *gin.Context) {
 		var dayOfWeek, mealType, name, ingredients, preparation string
 
 		if err := rows.Scan(&id, &planID, &dayOfWeek, &mealType, &name, &ingredients, &preparation); err != nil {
-			continue
+			log.Printf("[Nutritionist] Error scanning meal: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch meals"})
+			return
 		}
 
 		meals = append(meals, map[string]interface{}{
@@ -759,6 +881,14 @@ func getPatientMealPlanHandler(c *gin.Context) {
 		})
 	}
 
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch meals"})
+		return
+	}
+	rows.Close()
+	if !commitClinicalAccess(c, tx) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"plan":  plan,
 		"meals": meals,

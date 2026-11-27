@@ -11,6 +11,7 @@ const Messages = ({ profile }) => {
   const [archivedMessages, setArchivedMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [restrictedLegacy, setRestrictedLegacy] = useState(false);
   const [activeTab, setActiveTab] = useState('active'); // active | archived
   const messagesEndRef = useRef(null);
   const pollingInterval = useRef(null);
@@ -50,6 +51,7 @@ const Messages = ({ profile }) => {
       const res = await api.get('/messages/conversations');
       const data = Array.isArray(res.data) ? res.data : [];
       setConversations(data);
+      setRestrictedLegacy(res.headers?.['x-restricted-legacy-messages'] === 'true');
       
       // Only auto-select the first conversation on initial load
       if (isInitialLoad.current && data && data.length > 0) {
@@ -154,20 +156,13 @@ const Messages = ({ profile }) => {
   };
 
   const startNewConversation = async () => {
-    const recipientName = prompt('Nombre del destinatario (deja vacío para nutricionista):');
-    
-    // For now, we'll default to admin/nutritionist
-    // In a real app, you'd have a user search
     try {
-      // Send initial message to admin
-      await api.post('/messages', {
-        recipient_id: 1, // Assuming admin is ID 1
-        content: 'Hola, necesito ayuda'
-      });
-      
-      loadConversations();
+      const res = await api.get('/support');
+      if (!Number.isInteger(res.data?.id) || res.data.id <= 0) throw new Error('Invalid support account');
+      selectConversation({ user_id: res.data.id, user_name: res.data.name });
     } catch (err) {
       console.error('Error starting conversation:', err?.message);
+      alert(t('supportUnavailable'));
     }
   };
 
@@ -218,15 +213,16 @@ const Messages = ({ profile }) => {
           <div className="conversations-header">
             <h3>💬 Conversaciones</h3>
             <button className="new-conversation-btn" onClick={startNewConversation}>
-              ✉️ Nuevo
+              ✉️ {t('supportChat')}
             </button>
           </div>
+          {restrictedLegacy && <p className="messages-warning" role="status">{t('restrictedLegacyMessages')}</p>}
           
           <div className="conversations-list">
             {conversations.length === 0 ? (
               <div className="empty-conversations">
                 <p>😊 No tienes conversaciones</p>
-                <p>Inicia una nueva conversación con tu nutricionista</p>
+                <p>{t('supportChat')}</p>
                 <button className="btn-start" onClick={startNewConversation}>
                   Iniciar Chat
                 </button>

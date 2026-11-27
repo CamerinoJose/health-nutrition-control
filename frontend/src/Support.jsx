@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import api from './api';
 import './support.css';
 
 const Support = () => {
@@ -9,6 +10,8 @@ const Support = () => {
     subject: '',
     message: ''
   });
+  const [submitting, setSubmitting] = useState(false);
+  const [feedbackNotice, setFeedbackNotice] = useState(null);
 
   const faqs = [
     {
@@ -57,11 +60,28 @@ const Support = () => {
     setOpenFaq(openFaq === index ? null : index);
   };
 
-  const handleContactSubmit = (e) => {
+  const handleContactSubmit = async (e) => {
     e.preventDefault();
-    // En una implementación real, esto enviaría el mensaje al backend
-    alert('Mensaje enviado. Te responderemos pronto a tu email registrado.');
-    setContactForm({ subject: '', message: '' });
+    const subject = contactForm.subject.trim();
+    const message = contactForm.message.trim();
+    if (!subject || !message) {
+      setFeedbackNotice({ error: true, text: t('feedbackRequired') });
+      return;
+    }
+    setSubmitting(true);
+    setFeedbackNotice(null);
+    try {
+      const res = await api.post('/feedback', { subject, message });
+      if (res.status !== 201 || !Number.isInteger(res.data?.id) || res.data.id <= 0 || res.data.status !== 'pending') {
+        throw new Error('Feedback was not confirmed');
+      }
+      setContactForm({ subject: '', message: '' });
+      setFeedbackNotice({ error: false, text: t('feedbackSent') });
+    } catch {
+      setFeedbackNotice({ error: true, text: t('feedbackFailed') });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -94,50 +114,44 @@ const Support = () => {
             <span className="contact-icon">📧</span>
             <div>
               <strong>Email</strong>
-              <p>soporte@bienestar.com</p>
-            </div>
-          </div>
-          <div className="contact-item">
-            <span className="contact-icon">📱</span>
-            <div>
-              <strong>WhatsApp</strong>
-              <p>+52 123 456 7890</p>
-            </div>
-          </div>
-          <div className="contact-item">
-            <span className="contact-icon">⏰</span>
-            <div>
-              <strong>Horario</strong>
-              <p>Lun - Vie: 9:00 AM - 6:00 PM</p>
+              <p><a href="mailto:healthnutritioncontrol@gmail.com">healthnutritioncontrol@gmail.com</a></p>
             </div>
           </div>
         </div>
       </div>
 
       <div className="support-section">
-        <h3>✉️ Enviar Mensaje</h3>
+        <h3>✉️ {t('feedbackTitle')}</h3>
+        <p>{t('feedbackPrivacy')}</p>
+        {feedbackNotice && <p role={feedbackNotice.error ? 'alert' : 'status'}>{feedbackNotice.text}</p>}
         <form className="contact-form" onSubmit={handleContactSubmit}>
           <div className="form-group">
-            <label>Asunto</label>
+            <label htmlFor="feedback-subject">{t('subject')}</label>
             <input
+              id="feedback-subject"
               type="text"
               value={contactForm.subject}
               onChange={(e) => setContactForm({ ...contactForm, subject: e.target.value })}
               placeholder="¿En qué podemos ayudarte?"
+              maxLength={120}
               required
             />
           </div>
           <div className="form-group">
-            <label>Mensaje</label>
+            <label htmlFor="feedback-message">{t('message')}</label>
             <textarea
+              id="feedback-message"
               value={contactForm.message}
               onChange={(e) => setContactForm({ ...contactForm, message: e.target.value })}
               placeholder="Describe tu problema o pregunta..."
               rows="6"
+              maxLength={2000}
               required
             />
           </div>
-          <button type="submit" className="btn-submit">Enviar Mensaje</button>
+          <button type="submit" className="btn-submit" disabled={submitting}>
+            {submitting ? t('feedbackSending') : t('feedbackSubmit')}
+          </button>
         </form>
       </div>
 

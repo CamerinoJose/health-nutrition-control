@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -59,7 +60,7 @@ func TestAuthMiddlewareRejectsDeletedAccountToken(t *testing.T) {
 		_ = testDB.Close()
 		t.Fatal(err)
 	}
-	if _, err := testDB.Exec(`CREATE TEMP TABLE users (id INTEGER PRIMARY KEY)`); err != nil {
+	if _, err := testDB.Exec(`CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, role TEXT)`); err != nil {
 		_ = testDB.Close()
 		t.Fatal(err)
 	}
@@ -220,10 +221,10 @@ func runMedicineEndpointTest(t *testing.T, driver, dsn string, sqlite bool) {
 	if sqlite {
 		idDefinition = "INTEGER PRIMARY KEY AUTOINCREMENT"
 	}
-	if _, err := testDB.Exec("CREATE TEMP TABLE users (id INTEGER PRIMARY KEY)"); err != nil {
+	if _, err := testDB.Exec("CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, role TEXT)"); err != nil {
 		t.Fatalf("could not create temporary users table: %v", err)
 	}
-	if _, err := testDB.Exec("INSERT INTO users (id) VALUES (42)"); err != nil {
+	if _, err := testDB.Exec("INSERT INTO users (id, role) VALUES (42, 'user')"); err != nil {
 		t.Fatalf("could not create test user: %v", err)
 	}
 	if _, err := testDB.Exec("CREATE TEMP TABLE medicines (id " + idDefinition + ", user_id INTEGER, name TEXT, time TEXT, taken BOOLEAN DEFAULT FALSE)"); err != nil {
@@ -233,7 +234,7 @@ func runMedicineEndpointTest(t *testing.T, driver, dsn string, sqlite bool) {
 		t.Fatalf("could not create temporary medicine logs table: %v", err)
 	}
 
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{UserID: 42}).SignedString(jwtKey)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{UserID: 42, Role: "user"}).SignedString(jwtKey)
 	if err != nil {
 		t.Fatal("could not sign test token")
 	}
@@ -243,6 +244,7 @@ func runMedicineEndpointTest(t *testing.T, driver, dsn string, sqlite bool) {
 	api.Use(authMiddleware())
 	api.POST("/medicines", createMedicineHandler)
 	api.GET("/medicines", listMedicinesHandler)
+	api.PUT("/medicines/:id", updateMedicineHandler)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/medicines", strings.NewReader(`{"name":"Breakfast medicine","time":"07:30"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -274,6 +276,49 @@ func runMedicineEndpointTest(t *testing.T, driver, dsn string, sqlite bool) {
 	}
 	if len(medicinesList) != 1 || medicinesList[0].Name != "Breakfast medicine" || medicinesList[0].Time != "07:30" || medicinesList[0].Taken {
 		t.Fatalf("unexpected medicines response: %+v", medicinesList)
+	}
+	medicineID := medicinesList[0].ID
+	update := func(id int, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/medicines/"+strconv.Itoa(id), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		return recorder
+	}
+	for i := 0; i < 2; i++ {
+		response = update(medicineID, `{"name":"Breakfast medicine","time":"07:30","taken":true}`)
+		if response.Code != http.StatusOK {
+			t.Fatalf("confirm medicine returned %d: %s", response.Code, response.Body.String())
+		}
+	}
+	var logCount int
+	if err := queryRowDB("SELECT COUNT(*) FROM medicine_logs WHERE user_id = ? AND medicine_id = ?", 42, medicineID).Scan(&logCount); err != nil || logCount != 1 {
+		t.Fatalf("repeated confirmation did not preserve a single log: count=%d err=%v", logCount, err)
+	}
+	if _, err := testDB.Exec("INSERT INTO medicines (id, user_id, name, time) VALUES (100, 43, 'Other', '08:00')"); err != nil {
+		t.Fatal(err)
+	}
+	response = update(100, `{"name":"Other","time":"08:00","taken":true}`)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("other user's medicine returned %d", response.Code)
+	}
+	if err := queryRowDB("SELECT COUNT(*) FROM medicine_logs WHERE medicine_id = ?", 100).Scan(&logCount); err != nil || logCount != 0 {
+		t.Fatalf("created a log for another account: count=%d err=%v", logCount, err)
+	}
+	if _, err := testDB.Exec("ALTER TABLE medicine_logs ADD CONSTRAINT reject_new_log CHECK (taken_at = 'not-a-time') NOT VALID"); err != nil {
+		t.Fatal(err)
+	}
+	response = update(medicineID, `{"name":"Changed","time":"09:00","taken":true}`)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("failed log insert returned %d", response.Code)
+	}
+	var name string
+	if err := queryRowDB("SELECT name FROM medicines WHERE id = ?", medicineID).Scan(&name); err != nil || name != "Breakfast medicine" {
+		t.Fatalf("failed confirmation changed medicine: name=%q err=%v", name, err)
+	}
+	if err := queryRowDB("SELECT COUNT(*) FROM medicine_logs WHERE medicine_id = ?", medicineID).Scan(&logCount); err != nil || logCount != 1 {
+		t.Fatalf("failed confirmation lost prior log: count=%d err=%v", logCount, err)
 	}
 }
 

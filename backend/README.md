@@ -35,6 +35,14 @@ go run .
 Genera un valor único y aleatorio para cada entorno; no reutilices una clave de
 desarrollo ni publiques el valor. Render debe conservar su valor generado.
 
+### Chat de soporte
+
+Configura `SUPPORT_EMAIL` en el entorno del backend con el correo de una cuenta
+existente con rol `admin`. Si no está configurado o la cuenta no es
+administradora, el chat de soporte no está disponible. El rol administrativo no
+concede acceso automático a historiales clínicos; soporte ve los mensajes
+directos enviados explícitamente a esa cuenta.
+
 ### Gemini
 
 Configura `GEMINI_API_KEY` únicamente en el entorno del backend. Los chats web y

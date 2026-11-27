@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { Button, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Button, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { ageFromBirthDate, formatBirthDate } from './age';
 
 const initialState = {
   age: '',
+  birth_date: '',
   sex: '',
   height: '',
   current_weight: '',
@@ -198,13 +201,9 @@ export default function HealthProfileForm({ onSubmit, initialData }) {
   const [form, setForm] = useState(() => normalizeInitialData(initialData));
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
-
-  const toIntOrZero = (value) => {
-    const trimmed = String(value ?? '').trim();
-    if (!trimmed) return 0;
-    const n = parseInt(trimmed, 10);
-    return Number.isFinite(n) ? n : 0;
-  };
+  const [showBirthPicker, setShowBirthPicker] = useState(false);
+  const [birthPickerDate, setBirthPickerDate] = useState(new Date());
+  const age = ageFromBirthDate(form.birth_date);
 
   const toFloatOrZero = (value) => {
     const trimmed = String(value ?? '').trim();
@@ -220,7 +219,7 @@ export default function HealthProfileForm({ onSubmit, initialData }) {
   const handleSubmit = () => {
     // Validaciones
     const newErrors = {};
-    if (!form.age || isNaN(form.age) || form.age < 1 || form.age > 120) newErrors.age = 'Edad inválida';
+    if (age === null || age < 1 || age > 120) newErrors.birth_date = 'Selecciona una fecha de nacimiento válida (edad de 1 a 120 años)';
     if (!form.sex) newErrors.sex = 'Campo requerido';
     if (!form.height || isNaN(form.height) || form.height < 50 || form.height > 300) newErrors.height = 'Altura inválida';
     if (!form.current_weight || isNaN(form.current_weight) || form.current_weight < 20 || form.current_weight > 400) newErrors.current_weight = 'Peso inválido';
@@ -230,7 +229,7 @@ export default function HealthProfileForm({ onSubmit, initialData }) {
     setSubmitting(true);
     const payload = {
       ...form,
-      age: toIntOrZero(form.age),
+      age,
       height: toFloatOrZero(form.height),
       current_weight: toFloatOrZero(form.current_weight),
       goal_weight: toFloatOrZero(form.goal_weight),
@@ -263,8 +262,50 @@ export default function HealthProfileForm({ onSubmit, initialData }) {
         detectar cambios y darte recomendaciones más útiles. Comparte solo lo que te sientas cómodo
         proporcionando; la app no sustituye una consulta médica ni sirve para diagnósticos de emergencia.
       </Text>
-      <TextInput style={[styles.input, errors.age && styles.inputError]} placeholder="Edad" keyboardType="numeric" value={form.age} onChangeText={v => handleChange('age', v)} />
-      {errors.age && <Text style={styles.errorText}>{errors.age}</Text>}
+      <Text style={styles.label}>Fecha de nacimiento *</Text>
+      <TouchableOpacity
+        style={[styles.input, errors.birth_date && styles.inputError]}
+        accessibilityRole="button"
+        accessibilityLabel="Seleccionar fecha de nacimiento"
+        onPress={() => {
+          if (form.birth_date && age !== null) {
+            const [year, month, day] = form.birth_date.split('-').map(Number);
+            setBirthPickerDate(new Date(year, month - 1, day));
+          } else {
+            setBirthPickerDate(new Date());
+          }
+          setShowBirthPicker(true);
+        }}
+      >
+        <Text>{form.birth_date || 'Seleccionar fecha de nacimiento'}</Text>
+      </TouchableOpacity>
+      {showBirthPicker && (
+        <View>
+          <DateTimePicker
+            testID="birth-date-picker"
+            value={birthPickerDate}
+            mode="date"
+            maximumDate={new Date()}
+            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+            onChange={(event, chosen) => {
+              if (Platform.OS !== 'ios') setShowBirthPicker(false);
+              if (event.type !== 'dismissed' && chosen) {
+                setBirthPickerDate(chosen);
+                handleChange('birth_date', formatBirthDate(chosen));
+              }
+            }}
+          />
+          {Platform.OS === 'ios' && (
+            <Button title="Listo" onPress={() => {
+              handleChange('birth_date', formatBirthDate(birthPickerDate));
+              setShowBirthPicker(false);
+            }} />
+          )}
+        </View>
+      )}
+      {age !== null && <Text>Edad: {age} años</Text>}
+      {!form.birth_date && form.age ? <Text>Agrega tu fecha de nacimiento para calcular tu edad automáticamente.</Text> : null}
+      {errors.birth_date && <Text style={styles.errorText}>{errors.birth_date}</Text>}
 
       <Text style={styles.label}>Sexo *</Text>
       <View style={[styles.pickerWrapper, errors.sex && styles.inputError]}>

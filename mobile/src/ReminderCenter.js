@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { AppState, Alert, Linking, Modal, View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -6,7 +6,7 @@ import { reminderAlarmsAvailable, reconcileReminders, completeReminder, cancelRe
   createReminder, reminderCapabilities, openExactAlarmSettings, subscribeReminderOpen,
   reminderIdFromUrl, isPendingReminder } from './reminderAlarm';
 
-export default function ReminderCenter({ hidden = false }) {
+export default React.forwardRef(function ReminderCenter(_props, ref) {
   const [visible, setVisible] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [rows, setRows] = useState([]);
@@ -26,6 +26,11 @@ export default function ReminderCenter({ hidden = false }) {
       setError('');
     } catch (e) { setError(e.message); }
   }, []);
+  const open = useCallback(() => {
+    setVisible(true);
+    void refresh();
+  }, [refresh]);
+  useImperativeHandle(ref, () => ({ open }), [open]);
 
   useEffect(() => {
     const show = (id) => { setSelectedId(id); setVisible(true); void refresh(); };
@@ -51,12 +56,7 @@ export default function ReminderCenter({ hidden = false }) {
   const pending = rows.filter(isPendingReminder).sort((a, b) =>
     a.id === selectedId ? -1 : b.id === selectedId ? 1 : a.scheduledAt - b.scheduledAt);
   const selected = rows.find((r) => r.id === selectedId);
-  if (hidden) return null;
   return <>
-    <TouchableOpacity accessibilityRole="button" accessibilityLabel="Abrir recordatorios persistentes"
-      style={styles.launcher} onPress={() => { setVisible(true); void refresh(); }}>
-      <Text style={styles.white}>🔔 {pending.length || 'Recordatorios'}</Text>
-    </TouchableOpacity>
     <Modal visible={visible} animationType="slide" onRequestClose={() => setVisible(false)}>
       <SafeAreaView style={styles.page}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -113,10 +113,9 @@ export default function ReminderCenter({ hidden = false }) {
       </SafeAreaView>
     </Modal>
   </>;
-}
+});
 
 const styles = StyleSheet.create({
-  launcher: { position: 'absolute', right: 12, bottom: 80, backgroundColor: '#1d4ed8', borderRadius: 24, padding: 12, elevation: 5 },
   page: { flex: 1, backgroundColor: '#fff' }, content: { padding: 20, paddingBottom: 40 },
   heading: { fontSize: 22, fontWeight: '700', marginVertical: 12 }, title: { fontSize: 18, fontWeight: '700', marginBottom: 6 },
   card: { padding: 14, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 12, marginVertical: 8 },

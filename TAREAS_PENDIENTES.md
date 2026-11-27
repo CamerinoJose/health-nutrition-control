@@ -27,6 +27,22 @@ eventualmente iOS, organizada por perfil de usuario y no como aplicaciones
 aisladas por función. Los módulos compartidos son:
 
 - [ ] Identidad y roles: paciente, nutriólogo, familiar autorizado y administrador.
+- [ ] Iniciar pruebas de flujos de nutriólogo y doctor con datos ficticios:
+  acceso, pacientes asignados, citas, notas y medicinas según permisos.
+- [ ] Bloqueador de privacidad: desplegar y verificar en entorno aislado los
+  permisos clínicos por asignación y los accesos indirectos implementados
+  localmente. No usar cuentas profesionales con datos reales antes de ello.
+- [ ] Definir cómo verificar y recuperar mensajes anteriores a la migración:
+  no se borran, pero quedan restringidos porque no consta el rol de cada
+  participante cuando se enviaron.
+- [ ] Configurar `SUPPORT_EMAIL` en el backend desplegado con una cuenta
+  administradora de soporte y probar el chat; sin esa configuración estará
+  deshabilitado.
+- [ ] Diseñar el rol de secretaria para gestionar citas y confirmaciones de los
+  profesionales asignados, sin acceso clínico por defecto; definir asignación,
+  permisos, consentimiento y auditoría antes de implementarlo.
+- [ ] Definir y verificar permisos del doctor y nutriólogo para consultar datos
+  de pacientes autorizados y registrar notas, medicinas y recomendaciones.
 - [ ] Consentimientos y privacidad: uso de datos, acceso profesional y eliminación.
 - [ ] Perfil médico: contacto, condiciones, alergias, medicinas y preferencias.
 - [ ] Historia clínica compartida: datos longitudinales con fuente y fecha.

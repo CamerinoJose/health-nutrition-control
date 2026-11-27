@@ -56,6 +56,7 @@ test('account erasure clears current-account caches without removing other accou
   AsyncStorage.getAllKeys.mockResolvedValueOnce([
     'bienestar_gemini_history_v1:42',
     'bienestar_health_profile_v1:42',
+    'bienestar_health_profile_draft_v1:42',
     'bienestar_gemini_history_v1:420',
   ]);
 
@@ -64,6 +65,7 @@ test('account erasure clears current-account caches without removing other accou
   const removed = AsyncStorage.multiRemove.mock.calls[0][0];
   expect(removed).toContain('bienestar_gemini_history_v1:42');
   expect(removed).toContain('bienestar_health_profile_v1:42');
+  expect(removed).toContain('bienestar_health_profile_draft_v1:42');
   expect(removed).not.toContain('bienestar_gemini_history_v1:420');
   expect(removed).toContain('bienestar_health_profile_v1');
 });

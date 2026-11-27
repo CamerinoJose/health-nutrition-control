@@ -102,6 +102,7 @@ func deleteAccountData(ctx context.Context, userID int) (bool, error) {
 		{`DELETE FROM push_tokens WHERE user_id = ?`, []interface{}{userID}},
 		{`DELETE FROM social_accounts WHERE user_id = ?`, []interface{}{userID}},
 		{`DELETE FROM gemini_reports WHERE user_id = ?`, []interface{}{userID}},
+		{`DELETE FROM feedback WHERE user_id = ?`, []interface{}{userID}},
 		{`DELETE FROM admin_audit_logs WHERE admin_user_id = ? OR target_user_id = ?`, []interface{}{userID, userID}},
 	}
 

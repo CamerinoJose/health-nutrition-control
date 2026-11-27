@@ -23,13 +23,14 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 test('opening and closing the center cannot complete a reminder; Done can', async () => {
-  const ui = render(<ReminderCenter />);
-  fireEvent.press(ui.getByLabelText('Abrir recordatorios persistentes'));
+  const ref = React.createRef();
+  const ui = render(<ReminderCenter ref={ref} />);
+  act(() => ref.current.open());
   await waitFor(() => expect(ui.getByText('Prueba pendiente')).toBeTruthy());
   expect(alarms.completeReminder).not.toHaveBeenCalled();
   fireEvent.press(ui.getByText('Cerrar sin completar'));
   expect(alarms.completeReminder).not.toHaveBeenCalled();
-  fireEvent.press(ui.getByLabelText('Abrir recordatorios persistentes'));
+  act(() => ref.current.open());
   await act(async () => fireEvent.press(ui.getByText('✓ Hecho')));
   expect(alarms.completeReminder).toHaveBeenCalledTimes(1);
   expect(alarms.completeReminder).toHaveBeenCalledWith('one');
@@ -49,15 +50,16 @@ test('notification selection opens pending task without completing it', async ()
 test('signed-out users see a clear paused state and no creation form', async () => {
   alarms.reconcileReminders.mockResolvedValue([]);
   alarms.reminderCapabilities.mockResolvedValue({ paused: true, notifications: true, exactAlarms: true });
-  const ui = render(<ReminderCenter />);
-  fireEvent.press(ui.getByLabelText('Abrir recordatorios persistentes'));
+  const ref = React.createRef();
+  const ui = render(<ReminderCenter ref={ref} />);
+  act(() => ref.current.open());
   await waitFor(() => expect(ui.getByText('Inicia sesión con tu cuenta para crear o ver recordatorios locales.')).toBeTruthy());
   expect(ui.queryByText('Nuevo recordatorio')).toBeNull();
   ui.unmount();
 });
 
-test('can hide the floating launcher in screens with their own reminder access', () => {
-  const ui = render(<ReminderCenter hidden />);
+test('does not render a floating launcher over app screens', () => {
+  const ui = render(<ReminderCenter />);
   expect(ui.queryByLabelText('Abrir recordatorios persistentes')).toBeNull();
   ui.unmount();
 });

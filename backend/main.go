@@ -394,7 +394,7 @@ func main() {
 	corsCfg := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
+		ExposeHeaders:    []string{"Content-Length", "X-Restricted-Legacy-Messages"},
 		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
 	}
@@ -436,6 +436,7 @@ func main() {
 		{
 			auth.POST("/gemini/chat", geminiChatHandler)
 			auth.POST("/gemini/reports", createGeminiReportHandler)
+			auth.POST("/feedback", createFeedbackHandler)
 
 			// Medicines CRUD + daily history endpoints
 			auth.GET("/medicines", listMedicinesHandler)
@@ -469,37 +470,7 @@ func main() {
 
 			auth.POST("/medicines", createMedicineHandler)
 
-			auth.PUT("/medicines/:id", func(c *gin.Context) {
-				userID := getUserIDFromContext(c)
-				id := c.Param("id")
-				var req Medicine
-				if err := c.BindJSON(&req); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
-					return
-				}
-
-				_, err := execDB("UPDATE medicines SET name = ?, time = ? WHERE id = ? AND user_id = ?", req.Name, req.Time, id, userID)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo actualizar medicina"})
-					return
-				}
-
-				today := time.Now().Format("2006-01-02")
-				now := time.Now().Format(time.RFC3339)
-
-				if req.Taken {
-					_, _ = execDB("DELETE FROM medicine_logs WHERE user_id = ? AND medicine_id = ? AND taken_date = ?", userID, id, today)
-					_, err = execDB("INSERT INTO medicine_logs (user_id, medicine_id, taken_date, taken_at) VALUES (?, ?, ?, ?)", userID, id, today, now)
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo registrar la toma de hoy"})
-						return
-					}
-				} else {
-					_, _ = execDB("DELETE FROM medicine_logs WHERE user_id = ? AND medicine_id = ? AND taken_date = ?", userID, id, today)
-				}
-
-				c.JSON(http.StatusOK, gin.H{"message": "Medicina actualizada"})
-			})
+			auth.PUT("/medicines/:id", updateMedicineHandler)
 
 			auth.DELETE("/medicines/:id", func(c *gin.Context) {
 				userID := getUserIDFromContext(c)
@@ -549,6 +520,7 @@ func main() {
 			auth.PUT("/messages/:id/read", markMessageAsReadHandler)
 			auth.DELETE("/messages/:id", deleteMessageHandler)
 			auth.GET("/messages/archived", getArchivedMessagesHandler)
+			auth.GET("/support", getSupportHandler)
 
 			auth.GET("/nutritionists", listNutritionistsHandler)
 			auth.POST("/assign-nutritionist", assignNutritionistHandler)
@@ -592,12 +564,14 @@ func main() {
 			{
 				admin.GET("/metrics", adminMetricsHandler)
 				admin.GET("/users", listUsersHandler)
-				admin.GET("/users/:id/history", userHistoryHandler)
+				admin.GET("/users/:id/history", denyAdminClinicalAccess)
 				admin.PUT("/users/:id/role", updateUserRoleHandler)
 				admin.DELETE("/users/:id", deleteUserHandler)
 				admin.GET("/gemini-reports", listGeminiReportsHandler)
 				admin.PUT("/gemini-reports/:id", updateGeminiReportHandler)
-				admin.GET("/export", exportDataHandler)
+				admin.GET("/feedback", listFeedbackHandler)
+				admin.PUT("/feedback/:id", updateFeedbackHandler)
+				admin.GET("/export", denyAdminClinicalAccess)
 			}
 		}
 	}
@@ -682,6 +656,7 @@ func migrate() error {
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				user_id INTEGER UNIQUE,
 				age INTEGER,
+				birth_date TEXT,
 				sex TEXT,
 				height DOUBLE PRECISION,
 				current_weight DOUBLE PRECISION,
@@ -826,6 +801,7 @@ func migrate() error {
 				id SERIAL PRIMARY KEY,
 				user_id INTEGER UNIQUE,
 				age INTEGER,
+				birth_date TEXT,
 				sex TEXT,
 				height DOUBLE PRECISION,
 				current_weight DOUBLE PRECISION,
@@ -926,6 +902,16 @@ func migrate() error {
 		}
 	}
 
+	if _, err := execDB(`ALTER TABLE health_profiles ADD COLUMN birth_date TEXT;`); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") &&
+		!strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		return fmt.Errorf("health profile birth date migration failed: %w", err)
+	}
+
+	if err := migrateMessageAccess(); err != nil {
+		return fmt.Errorf("message access migration failed: %w", err)
+	}
+
 	// Add nutritionist_id column to appointments table if it doesn't exist
 	execDB(`ALTER TABLE appointments ADD COLUMN nutritionist_id INTEGER;`)
 
@@ -974,6 +960,18 @@ func migrate() error {
 	)`)
 	if err != nil {
 		return fmt.Errorf("Gemini report migration failed: %w", err)
+	}
+
+	_, err = execDB(`CREATE TABLE IF NOT EXISTS feedback (
+		id SERIAL PRIMARY KEY,
+		user_id INTEGER NOT NULL REFERENCES users(id),
+		subject TEXT NOT NULL,
+		message TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	if err != nil {
+		return fmt.Errorf("feedback migration failed: %w", err)
 	}
 
 	log.Println("✅ Database migration completed successfully")
@@ -1234,6 +1232,7 @@ type HealthProfile struct {
 	ID                 int     `json:"id"`
 	UserID             int     `json:"user_id"`
 	Age                int     `json:"age"`
+	BirthDate          *string `json:"birth_date"`
 	Sex                string  `json:"sex"`
 	Height             float64 `json:"height"`
 	CurrentWeight      float64 `json:"current_weight"`
@@ -1255,6 +1254,34 @@ type HealthProfile struct {
 	UpdatedAt          string  `json:"updated_at"`
 }
 
+func ageFromBirthDate(value string, today time.Time) (int, error) {
+	birth, err := time.Parse("2006-01-02", value)
+	if err != nil || birth.Year() < 1 || birth.Format("2006-01-02") != value {
+		return 0, errors.New("invalid birth date")
+	}
+	year, month, day := today.Date()
+	if birth.Year() > year || (birth.Year() == year && (birth.Month() > month || (birth.Month() == month && birth.Day() > day))) {
+		return 0, errors.New("birth date is in the future")
+	}
+	age := year - birth.Year()
+	if month < birth.Month() || (month == birth.Month() && day < birth.Day()) {
+		age--
+	}
+	return age, nil
+}
+
+func validateProfileBirthDate(profile *HealthProfile) error {
+	if profile.BirthDate == nil {
+		return nil
+	}
+	age, err := ageFromBirthDate(*profile.BirthDate, time.Now())
+	if err != nil {
+		return err
+	}
+	profile.Age = age
+	return nil
+}
+
 func createHealthProfileHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 	var profile HealthProfile
@@ -1263,18 +1290,22 @@ func createHealthProfileHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
 		return
 	}
+	if err := validateProfileBirthDate(&profile); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "fecha de nacimiento inválida"})
+		return
+	}
 
 	profile.UserID = claims.UserID
 	profile.UpdatedAt = time.Now().Format(time.RFC3339)
 
 	_, err := execDB(`
 		INSERT INTO health_profiles (
-			user_id, age, sex, height, current_weight, goal_weight, waist_circumference,
+			user_id, age, birth_date, sex, height, current_weight, goal_weight, waist_circumference,
 			medical_conditions, medications, allergies, glucose_fasting, hba1c,
 			cholesterol_total, cholesterol_ldl, cholesterol_hdl, triglycerides,
 			activity_level, meal_schedule, sleep_hours, goals, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, profile.UserID, profile.Age, profile.Sex, profile.Height, profile.CurrentWeight,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, profile.UserID, profile.Age, profile.BirthDate, profile.Sex, profile.Height, profile.CurrentWeight,
 		profile.GoalWeight, profile.WaistCircumference, profile.MedicalConditions,
 		profile.Medications, profile.Allergies, profile.GlucoseFasting, profile.HbA1c,
 		profile.CholesterolTotal, profile.CholesterolLDL, profile.CholesterolHDL,
@@ -1292,7 +1323,7 @@ func createHealthProfileHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Perfil de salud creado exitosamente"})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Perfil de salud creado exitosamente", "birth_date": profile.BirthDate})
 }
 
 func getHealthProfileHandler(c *gin.Context) {
@@ -1300,13 +1331,13 @@ func getHealthProfileHandler(c *gin.Context) {
 	var profile HealthProfile
 
 	err := queryRowDB(`
-		SELECT id, user_id, age, sex, height, current_weight, goal_weight, waist_circumference,
+		SELECT id, user_id, age, birth_date, sex, height, current_weight, goal_weight, waist_circumference,
 		medical_conditions, medications, allergies, glucose_fasting, hba1c,
 		cholesterol_total, cholesterol_ldl, cholesterol_hdl, triglycerides,
 		activity_level, meal_schedule, sleep_hours, goals, updated_at
 		FROM health_profiles WHERE user_id = ?
 	`, claims.UserID).Scan(
-		&profile.ID, &profile.UserID, &profile.Age, &profile.Sex, &profile.Height,
+		&profile.ID, &profile.UserID, &profile.Age, &profile.BirthDate, &profile.Sex, &profile.Height,
 		&profile.CurrentWeight, &profile.GoalWeight, &profile.WaistCircumference,
 		&profile.MedicalConditions, &profile.Medications, &profile.Allergies,
 		&profile.GlucoseFasting, &profile.HbA1c, &profile.CholesterolTotal,
@@ -1324,6 +1355,11 @@ func getHealthProfileHandler(c *gin.Context) {
 		return
 	}
 
+	if err := validateProfileBirthDate(&profile); err != nil {
+		log.Printf("[HealthProfile] Invalid stored birth date for user %d", claims.UserID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "fecha de nacimiento guardada inválida"})
+		return
+	}
 	c.JSON(http.StatusOK, profile)
 }
 
@@ -1335,19 +1371,23 @@ func updateHealthProfileHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
 		return
 	}
+	if err := validateProfileBirthDate(&profile); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "fecha de nacimiento inválida"})
+		return
+	}
 
 	profile.UpdatedAt = time.Now().Format(time.RFC3339)
 
 	res, err := execDB(`
 		UPDATE health_profiles SET
-			age = ?, sex = ?, height = ?, current_weight = ?, goal_weight = ?,
+			age = ?, birth_date = COALESCE(?, birth_date), sex = ?, height = ?, current_weight = ?, goal_weight = ?,
 			waist_circumference = ?, medical_conditions = ?, medications = ?,
 			allergies = ?, glucose_fasting = ?, hba1c = ?, cholesterol_total = ?,
 			cholesterol_ldl = ?, cholesterol_hdl = ?, triglycerides = ?,
 			activity_level = ?, meal_schedule = ?, sleep_hours = ?, goals = ?,
 			updated_at = ?
 		WHERE user_id = ?
-	`, profile.Age, profile.Sex, profile.Height, profile.CurrentWeight, profile.GoalWeight,
+	`, profile.Age, profile.BirthDate, profile.Sex, profile.Height, profile.CurrentWeight, profile.GoalWeight,
 		profile.WaistCircumference, profile.MedicalConditions, profile.Medications,
 		profile.Allergies, profile.GlucoseFasting, profile.HbA1c, profile.CholesterolTotal,
 		profile.CholesterolLDL, profile.CholesterolHDL, profile.Triglycerides,
@@ -1367,7 +1407,7 @@ func updateHealthProfileHandler(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Perfil actualizado exitosamente"})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Perfil actualizado exitosamente", "birth_date": profile.BirthDate})
 }
 
 // Helper to get user ID from JWT claims in context
@@ -1427,6 +1467,55 @@ func createMedicineHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Medicina agregada"})
 }
 
+func updateMedicineHandler(c *gin.Context) {
+	userID := getUserIDFromContext(c)
+	id := c.Param("id")
+	var req Medicine
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
+		return
+	}
+
+	tx, err := db.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo actualizar medicina"})
+		return
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(c.Request.Context(), rebindQuery("UPDATE medicines SET name = ?, time = ? WHERE id = ? AND user_id = ?"), req.Name, req.Time, id, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo actualizar medicina"})
+		return
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo verificar la medicina"})
+		return
+	}
+	if rows == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Medicina no encontrada"})
+		return
+	}
+
+	now := time.Now()
+	today := now.Format("2006-01-02")
+	if _, err := tx.ExecContext(c.Request.Context(), rebindQuery("DELETE FROM medicine_logs WHERE user_id = ? AND medicine_id = ? AND taken_date = ?"), userID, id, today); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo actualizar la toma de hoy"})
+		return
+	}
+	if req.Taken {
+		if _, err := tx.ExecContext(c.Request.Context(), rebindQuery("INSERT INTO medicine_logs (user_id, medicine_id, taken_date, taken_at) VALUES (?, ?, ?, ?)"), userID, id, today, now.Format(time.RFC3339)); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo registrar la toma de hoy"})
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo guardar la toma"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Medicina actualizada"})
+}
+
 // --- Middleware ---
 
 func authMiddleware() gin.HandlerFunc {
@@ -1456,8 +1545,8 @@ func authMiddleware() gin.HandlerFunc {
 			return
 		}
 		if db != nil {
-			var userID int
-			err := queryRowDB(`SELECT id FROM users WHERE id = ?`, claims.UserID).Scan(&userID)
+			var currentRole string
+			err := queryRowDB(`SELECT role FROM users WHERE id = ?`, claims.UserID).Scan(&currentRole)
 			if errors.Is(err, sql.ErrNoRows) {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 					"error": "account no longer exists",
@@ -1467,6 +1556,10 @@ func authMiddleware() gin.HandlerFunc {
 			}
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "servicio no disponible"})
+				return
+			}
+			if currentRole != claims.Role {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "account role changed; sign in again", "code": "role_changed"})
 				return
 			}
 		}
@@ -1950,108 +2043,8 @@ func listUsersHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, users)
 }
 
-func userHistoryHandler(c *gin.Context) {
-	if !isPrivacyAdmin(c) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "se requiere autorización de privacidad"})
-		return
-	}
-	userID := c.Param("id")
-	rows, err := queryDB(`SELECT id, user_id, date, weight, fat_percentage, muscle_percentage FROM histories WHERE user_id = ? ORDER BY date DESC`, userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch history"})
-		return
-	}
-	defer rows.Close()
-
-	var history []HistoryEntry
-	for rows.Next() {
-		var entry HistoryEntry
-		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.Date, &entry.Weight, &entry.FatPercentage, &entry.MusclePercentage); err != nil {
-			continue
-		}
-		history = append(history, entry)
-	}
-
-	if history == nil {
-		history = []HistoryEntry{}
-	}
-	auditAdminAction(c, "view_user_health_history", userID)
-	c.JSON(http.StatusOK, history)
-}
-
-type ExportRecord struct {
-	UserID           int     `json:"user_id"`
-	UserName         string  `json:"user_name"`
-	Email            string  `json:"email"`
-	Role             string  `json:"role"`
-	RecordID         int     `json:"record_id"`
-	Date             string  `json:"date"`
-	Weight           float64 `json:"weight"`
-	FatPercentage    float64 `json:"fat_percentage"`
-	MusclePercentage float64 `json:"muscle_percentage"`
-}
-
-func exportDataHandler(c *gin.Context) {
-	if !isPrivacyAdmin(c) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "la exportación requiere autorización de privacidad"})
-		return
-	}
-	query := `
-		SELECT u.id, u.name, u.email, u.role, h.id, h.date, h.weight, h.fat_percentage, h.muscle_percentage
-		FROM users u
-		LEFT JOIN histories h ON u.id = h.user_id
-		ORDER BY u.id, h.date DESC
-	`
-	rows, err := queryDB(query)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "export failed"})
-		return
-	}
-	defer rows.Close()
-
-	var records []ExportRecord
-	for rows.Next() {
-		var record ExportRecord
-		var recordID *int
-		var date *string
-		var weight *float64
-		var fatPct *float64
-		var musclePct *float64
-
-		if err := rows.Scan(&record.UserID, &record.UserName, &record.Email, &record.Role, &recordID, &date, &weight, &fatPct, &musclePct); err != nil {
-			continue
-		}
-
-		record.RecordID = 0
-		record.Date = ""
-		record.Weight = 0
-		record.FatPercentage = 0
-		record.MusclePercentage = 0
-
-		if recordID != nil {
-			record.RecordID = *recordID
-		}
-		if date != nil {
-			record.Date = *date
-		}
-		if weight != nil {
-			record.Weight = *weight
-		}
-		if fatPct != nil {
-			record.FatPercentage = *fatPct
-		}
-		if musclePct != nil {
-			record.MusclePercentage = *musclePct
-		}
-
-		records = append(records, record)
-	}
-
-	if records == nil {
-		records = []ExportRecord{}
-	}
-	auditAdminAction(c, "export_user_health_data", nil)
-	c.JSON(http.StatusOK, records)
+func denyAdminClinicalAccess(c *gin.Context) {
+	c.JSON(http.StatusForbidden, gin.H{"error": "administrative role does not grant clinical access"})
 }
 
 func updateUserRoleHandler(c *gin.Context) {
@@ -3390,34 +3383,60 @@ func sendMessageHandler(c *gin.Context) {
 		return
 	}
 
+	tx, err := db.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send message"})
+		return
+	}
+	defer tx.Rollback()
+	sender, recipient, err := messageParticipants(c.Request.Context(), tx, claims.UserID, input.RecipientID)
+	if errors.Is(err, sql.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "recipient not found"})
+		return
+	}
+	if err != nil {
+		log.Printf("[Messages] Error checking participants: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send message"})
+		return
+	}
+	if sender.role != claims.Role {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "account role changed; sign in again"})
+		return
+	}
+	messageType, patientID, err := classifyMessage(sender, recipient)
+	if errors.Is(err, errSupportUnavailable) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "support is unavailable"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "conversation is not authorized"})
+		return
+	}
 	var messageID int
-	err := queryRowDB(`
-		INSERT INTO messages (sender_id, recipient_id, content, is_read, created_at)
-		VALUES (?, ?, ?, FALSE, CURRENT_TIMESTAMP) RETURNING id
-	`, claims.UserID, input.RecipientID, input.Content).Scan(&messageID)
+	err = tx.QueryRowContext(c.Request.Context(), rebindQuery(`
+		INSERT INTO messages (sender_id, recipient_id, content, is_read, created_at, message_type, clinical_patient_id)
+		VALUES (?, ?, ?, FALSE, CURRENT_TIMESTAMP, ?, ?) RETURNING id
+	`), claims.UserID, input.RecipientID, input.Content, messageType, patientID).Scan(&messageID)
 	if err != nil {
 		log.Printf("[Messages] Error creating: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send message"})
 		return
 	}
 
-	// Get sender name for notification
-	var senderName string
-	queryRowDB(`SELECT name FROM users WHERE id = ?`, claims.UserID).Scan(&senderName)
-
-	// Create notification for recipient
 	notifTitle := "Nuevo mensaje"
-	notifMsg := fmt.Sprintf("De: %s", senderName)
-	_, err = execDB(`
+	notifMsg := fmt.Sprintf("De: %s", sender.name)
+	_, err = tx.ExecContext(c.Request.Context(), rebindQuery(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, is_read, created_at)
-		VALUES (?, 'message', ?, ?, ?, 0, ?)
-	`, input.RecipientID, notifTitle, notifMsg, messageID)
+		VALUES (?, 'message', ?, ?, ?, FALSE, ?)
+	`), input.RecipientID, notifTitle, notifMsg, messageID, time.Now().Format("2006-01-02 15:04:05"))
 
 	if err != nil {
-		log.Printf("[Messages] Warning: Failed to create notification: %v", err)
-		// Don't fail the message send if notification creation fails
-	} else {
-		log.Printf("[Messages] Notification created")
+		log.Printf("[Messages] Failed to create notification: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send message"})
+		return
+	}
+	if !commitClinicalAccess(c, tx) {
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -3449,9 +3468,9 @@ func getMessagesHandler(c *gin.Context) {
 		WHERE d.id IS NULL AND (
 			(m.sender_id = ? AND m.recipient_id = ?) 
 			OR (m.sender_id = ? AND m.recipient_id = ?)
-		)
+		) AND `+messageVisibilitySQL+`
 		ORDER BY m.created_at ASC
-	`, claims.UserID, claims.UserID, otherUserID, otherUserID, claims.UserID)
+	`, claims.UserID, claims.UserID, otherUserID, otherUserID, claims.UserID, claims.UserID, claims.UserID)
 
 	if err != nil {
 		log.Printf("[Messages] Error querying: %v", err)
@@ -3489,18 +3508,25 @@ func getMessagesHandler(c *gin.Context) {
 func getConversationsHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 
-	// Get unique conversation partners with their latest message info
 	rows, err := queryDB(`
-		SELECT DISTINCT
-			CASE WHEN m.sender_id = ? THEN m.recipient_id ELSE m.sender_id END as user_id,
-			u.name as user_name,
-			u.role as user_role
-		FROM messages m
-		LEFT JOIN users u ON u.id = CASE WHEN m.sender_id = ? THEN m.recipient_id ELSE m.sender_id END
-		LEFT JOIN deleted_messages d ON d.message_id = m.id AND d.user_id = ?
-		WHERE d.id IS NULL AND (m.sender_id = ? OR m.recipient_id = ?)
-		ORDER BY m.id DESC
-	`, claims.UserID, claims.UserID, claims.UserID, claims.UserID, claims.UserID)
+		WITH visible AS (
+			SELECT m.*,
+				CASE WHEN m.sender_id = ? THEN m.recipient_id ELSE m.sender_id END AS other_id
+			FROM messages m
+			LEFT JOIN deleted_messages d ON d.message_id = m.id AND d.user_id = ?
+			WHERE d.id IS NULL AND (m.sender_id = ? OR m.recipient_id = ?)
+				AND `+messageVisibilitySQL+`
+		), ranked AS (
+			SELECT visible.*,
+				ROW_NUMBER() OVER (PARTITION BY other_id ORDER BY created_at DESC, id DESC) AS position,
+				COUNT(*) FILTER (WHERE recipient_id = ? AND is_read = FALSE)
+					OVER (PARTITION BY other_id) AS unread_count
+			FROM visible
+		)
+		SELECT r.other_id, u.name, u.role, r.content, r.created_at, r.unread_count
+		FROM ranked r JOIN users u ON u.id = r.other_id
+		WHERE r.position = 1 ORDER BY r.created_at DESC, r.id DESC
+	`, claims.UserID, claims.UserID, claims.UserID, claims.UserID, claims.UserID, claims.UserID, claims.UserID)
 
 	if err != nil {
 		log.Printf("[Messages] Error getting conversations: %v", err)
@@ -3510,56 +3536,42 @@ func getConversationsHandler(c *gin.Context) {
 	defer rows.Close()
 
 	conversations := []map[string]interface{}{}
-	seenUsers := make(map[int]bool)
-
 	for rows.Next() {
 		var otherUserID int
-		var otherUserName, otherUserRole string
-
-		if err := rows.Scan(&otherUserID, &otherUserName, &otherUserRole); err != nil {
-			log.Printf("[Messages] Error scanning conversation: %v", err)
-			continue
-		}
-
-		// Skip duplicates
-		if seenUsers[otherUserID] {
-			continue
-		}
-		seenUsers[otherUserID] = true
-
-		// Get last message details for this conversation
-		var lastMessage sql.NullString
-		var lastMessageTime sql.NullString
-		queryRowDB(`
-			SELECT m.content, m.created_at
-			FROM messages m
-			LEFT JOIN deleted_messages d ON d.message_id = m.id AND d.user_id = ?
-			WHERE d.id IS NULL AND (
-				(m.sender_id = ? AND m.recipient_id = ?) OR 
-				(m.sender_id = ? AND m.recipient_id = ?)
-			)
-			ORDER BY m.created_at DESC
-			LIMIT 1
-		`, claims.UserID, claims.UserID, otherUserID, otherUserID, claims.UserID).Scan(&lastMessage, &lastMessageTime)
-
-		// Count unread messages from this user
+		var otherUserName, otherUserRole, lastMessage, lastMessageTime string
 		var unreadCount int
-		queryRowDB(`
-			SELECT COUNT(*)
-			FROM messages m
-			LEFT JOIN deleted_messages d ON d.message_id = m.id AND d.user_id = ?
-			WHERE d.id IS NULL AND m.sender_id = ? AND m.recipient_id = ? AND m.is_read = 0
-		`, claims.UserID, otherUserID, claims.UserID).Scan(&unreadCount)
+
+		if err := rows.Scan(&otherUserID, &otherUserName, &otherUserRole, &lastMessage, &lastMessageTime, &unreadCount); err != nil {
+			log.Printf("[Messages] Error scanning conversation: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get conversations"})
+			return
+		}
 
 		conversations = append(conversations, map[string]interface{}{
 			"user_id":           otherUserID,
 			"user_name":         otherUserName,
 			"user_role":         otherUserRole,
-			"last_message":      lastMessage.String,
-			"last_message_time": lastMessageTime.String,
+			"last_message":      lastMessage,
+			"last_message_time": lastMessageTime,
 			"unread_count":      unreadCount,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get conversations"})
+		return
+	}
+	if err := rows.Close(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get conversations"})
+		return
+	}
+	var restrictedLegacy bool
+	if err := queryRowDB(`SELECT EXISTS (
+		SELECT 1 FROM messages WHERE (sender_id = ? OR recipient_id = ?) AND message_type IS NULL
+	)`, claims.UserID, claims.UserID).Scan(&restrictedLegacy); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get conversations"})
+		return
+	}
+	c.Header("X-Restricted-Legacy-Messages", strconv.FormatBool(restrictedLegacy))
 
 	log.Printf("[Messages] Found %d conversations", len(conversations))
 
@@ -3575,15 +3587,21 @@ func markMessageAsReadHandler(c *gin.Context) {
 	messageID := c.Param("id")
 
 	// Only mark as read if current user is the recipient
-	_, err := execDB(`
-		UPDATE messages 
-		SET is_read = 1 
-		WHERE id = ? AND recipient_id = ?
-	`, messageID, claims.UserID)
+	result, err := execDB(`
+		UPDATE messages m SET is_read = TRUE
+		WHERE m.id = ? AND m.recipient_id = ? AND `+messageVisibilitySQL,
+		messageID, claims.UserID, claims.UserID, claims.UserID)
 
 	if err != nil {
 		log.Printf("[Notifications] Error marking as read: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark message as read"})
+		return
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark message as read"})
+		return
+	} else if affected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "message not found"})
 		return
 	}
 
@@ -3596,14 +3614,23 @@ func deleteMessageHandler(c *gin.Context) {
 	messageID := c.Param("id")
 
 	// Soft delete per user: mark hidden for this user
-	_, err := execDB(`
-		INSERT OR IGNORE INTO deleted_messages (user_id, message_id, created_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP)
-	`, claims.UserID, messageID)
+	result, err := execDB(`
+		INSERT INTO deleted_messages (user_id, message_id, created_at)
+		SELECT ?, m.id, CURRENT_TIMESTAMP FROM messages m
+		WHERE m.id = ? AND (m.sender_id = ? OR m.recipient_id = ?) AND `+messageVisibilitySQL+`
+		ON CONFLICT (user_id, message_id) DO UPDATE SET user_id = EXCLUDED.user_id
+	`, claims.UserID, messageID, claims.UserID, claims.UserID, claims.UserID, claims.UserID)
 
 	if err != nil {
 		log.Printf("[Messages] Error soft-deleting: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete message"})
+		return
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete message"})
+		return
+	} else if affected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "message not found"})
 		return
 	}
 
@@ -3627,9 +3654,10 @@ func getArchivedMessagesHandler(c *gin.Context) {
 		LEFT JOIN users u1 ON m.sender_id = u1.id
 		LEFT JOIN users u2 ON m.recipient_id = u2.id
 		INNER JOIN deleted_messages d ON d.message_id = m.id AND d.user_id = ?
-		WHERE (m.sender_id = ? AND m.recipient_id = ?) OR (m.sender_id = ? AND m.recipient_id = ?)
+		WHERE ((m.sender_id = ? AND m.recipient_id = ?) OR (m.sender_id = ? AND m.recipient_id = ?))
+			AND `+messageVisibilitySQL+`
 		ORDER BY m.created_at DESC
-	`, claims.UserID, claims.UserID, otherUserID, otherUserID, claims.UserID)
+	`, claims.UserID, claims.UserID, otherUserID, otherUserID, claims.UserID, claims.UserID, claims.UserID)
 
 	if err != nil {
 		log.Printf("[Messages] Error querying archived: %v", err)
@@ -3669,12 +3697,25 @@ func getNotificationsHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 
 	rows, err := queryDB(`
-		SELECT id, type, title, message, related_id, is_read, created_at
-		FROM notifications
-		WHERE user_id = ?
-		ORDER BY created_at DESC
+		SELECT n.id, n.type, n.title, n.message, n.related_id, n.is_read, n.created_at
+		FROM notifications n
+		WHERE n.user_id = ?
+			AND (n.type <> 'message' OR EXISTS (
+				SELECT 1 FROM messages m
+				WHERE m.id = n.related_id AND m.recipient_id = n.user_id
+					AND `+messageVisibilitySQL+`
+			))
+			AND (n.type NOT IN ('appointment_accepted', 'appointment_rejected') OR EXISTS (
+				SELECT 1 FROM appointments a
+				JOIN users p ON p.id = a.user_id
+				JOIN users professional ON professional.id = p.nutritionist_id
+				WHERE a.id = n.related_id AND professional.id = n.user_id
+					AND professional.role = 'nutritionist' AND p.role = 'user'
+					AND a.nutritionist_id = professional.id
+			))
+		ORDER BY n.created_at DESC
 		LIMIT 50
-	`, claims.UserID)
+	`, claims.UserID, claims.UserID, claims.UserID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch notifications"})
@@ -3867,15 +3908,24 @@ func sendPushNotification(userID int, title, body string, data map[string]interf
 // getAppointmentChangesHandler gets proposed changes for an appointment
 func getAppointmentChangesHandler(c *gin.Context) {
 	appointmentID := c.Param("appointment_id")
+	claims := c.MustGet("claims").(*Claims)
 
 	rows, err := queryDB(`
 		SELECT ac.id, ac.new_date, ac.new_time, ac.reason, ac.status, ac.created_at, ac.responded_at,
 			u.name as proposed_by_name
 		FROM appointment_changes ac
 		LEFT JOIN users u ON u.id = ac.proposed_by
-		WHERE ac.appointment_id = ?
+		WHERE ac.appointment_id = ? AND EXISTS (
+			SELECT 1 FROM appointments a
+			JOIN users p ON p.id = a.user_id
+			JOIN users actor ON actor.id = ?
+			WHERE a.id = ac.appointment_id AND
+				((p.id = actor.id AND actor.role = 'user') OR
+				(actor.role = 'nutritionist' AND p.role = 'user'
+				 AND p.nutritionist_id = actor.id AND a.nutritionist_id = actor.id))
+		)
 		ORDER BY ac.created_at DESC
-	`, appointmentID)
+	`, appointmentID, claims.UserID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch changes"})

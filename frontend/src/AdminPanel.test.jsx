@@ -52,4 +52,53 @@ describe('AdminPanel Gemini reports', () => {
       expect(screen.getByText('reviewed')).toBeTruthy()
     })
   })
+
+  it('shows feedback in order and updates its status', async () => {
+    let status = 'pending'
+    api.get.mockImplementation(async (path) => {
+      if (path === '/admin/metrics') return { data: {} }
+      if (path === '/admin/users') return { data: [] }
+      if (path === '/admin/feedback?view=active&after_id=0') return {
+        data: { items: [
+          { id: 1, subject: 'Primero', message: 'Uno', status, created_at: '2026-01-01T10:00:00Z' },
+          { id: 2, subject: 'Segundo', message: 'Dos', status: 'pending', created_at: '2026-01-02T10:00:00Z' },
+        ], next_after_id: 0 },
+      }
+      throw new Error(`Unexpected API path: ${path}`)
+    })
+    api.put.mockImplementation(async (_path, payload) => { status = payload.status })
+    render(<AdminPanel token="admin-token" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'feedbackQueue' }))
+    const first = await screen.findByText('Primero')
+    const second = screen.getByText('Segundo')
+    expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(screen.getAllByRole('button', { name: 'feedbackStart' })[0])
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith('/admin/feedback/1', { status: 'in_progress' }))
+    expect(await screen.findByText('feedbackProgressStatus')).toBeTruthy()
+  })
+
+  it('loads additional feedback and reopens completed feedback', async () => {
+    api.get.mockImplementation(async (path) => {
+      if (path === '/admin/metrics') return { data: {} }
+      if (path === '/admin/users') return { data: [] }
+      if (path === '/admin/feedback?view=active&after_id=0') return {
+        data: { items: [{ id: 1, subject: 'Primero', message: 'Uno', status: 'pending', created_at: '2026-01-01T10:00:00Z' }], next_after_id: 1 },
+      }
+      if (path === '/admin/feedback?view=active&after_id=1') return {
+        data: { items: [{ id: 2, subject: 'Siguiente', message: 'Dos', status: 'pending', created_at: '2026-01-02T10:00:00Z' }], next_after_id: 0 },
+      }
+      if (path === '/admin/feedback?view=resolved&after_id=0') return {
+        data: { items: [{ id: 3, subject: 'Completado', message: 'Tres', status: 'resolved', created_at: '2026-01-03T10:00:00Z' }], next_after_id: 0 },
+      }
+      throw new Error(`Unexpected API path: ${path}`)
+    })
+    api.put.mockResolvedValue({ data: { ok: true } })
+    render(<AdminPanel token="admin-token" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'feedbackQueue' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'feedbackMore' }))
+    expect(await screen.findByText('Siguiente')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'feedbackResolved' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'feedbackReopen' }))
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith('/admin/feedback/3', { status: 'in_progress' }))
+  })
 })

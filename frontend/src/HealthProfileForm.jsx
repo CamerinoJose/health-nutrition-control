@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import api from './api';
+import { ageFromBirthDate } from './age';
 import './healthProfile.css';
 
 const mealScheduleOptions = [
@@ -151,6 +152,7 @@ function HealthProfileForm({ onClose, onSave }) {
   const [fieldErrors, setFieldErrors] = useState({});
   const [profile, setProfile] = useState({
     age: '',
+    birth_date: '',
     sex: '',
     height: '',
     current_weight: '',
@@ -189,6 +191,7 @@ function HealthProfileForm({ onClose, onSave }) {
         const parsedAllergies = parseSelectionsFromText(res.data.allergies, allergyOptions);
         setProfile({
           ...res.data,
+          birth_date: res.data.birth_date || '',
           meal_schedule: normalizedMealSchedule.meal_schedule,
           meal_schedule_custom: normalizedMealSchedule.meal_schedule_custom,
           medical_conditions_selected: parsedMedical.selected,
@@ -237,7 +240,8 @@ function HealthProfileForm({ onClose, onSave }) {
 
     // Validaciones
     const newErrors = {};
-    if (!profile.age || isNaN(profile.age) || profile.age < 1 || profile.age > 120) newErrors.age = 'Edad inválida';
+    const age = ageFromBirthDate(profile.birth_date);
+    if (age === null || age < 1 || age > 120) newErrors.birth_date = t('invalidBirthDate');
     if (!profile.sex) newErrors.sex = 'Campo requerido';
     if (!profile.height || isNaN(profile.height) || profile.height < 50 || profile.height > 300) newErrors.height = 'Altura inválida';
     if (!profile.current_weight || isNaN(profile.current_weight) || profile.current_weight < 20 || profile.current_weight > 400) newErrors.current_weight = 'Peso inválido';
@@ -256,7 +260,7 @@ function HealthProfileForm({ onClose, onSave }) {
         meal_schedule: profile.meal_schedule === 'custom' ? profile.meal_schedule_custom : profile.meal_schedule,
         medical_conditions: joinSelectionsToText(profile.medical_conditions_selected, profile.medical_conditions_custom, medicalConditionOptions, t),
         allergies: joinSelectionsToText(profile.allergies_selected, profile.allergies_custom, allergyOptions, t),
-        age: profile.age ? parseInt(profile.age) : 0,
+        age,
         height: profile.height ? parseFloat(profile.height) : 0,
         current_weight: profile.current_weight ? parseFloat(profile.current_weight) : 0,
         goal_weight: profile.goal_weight ? parseFloat(profile.goal_weight) : 0,
@@ -283,6 +287,10 @@ function HealthProfileForm({ onClose, onSave }) {
         res = await api.post('/health-profile', cleanedProfile);
       }
 
+      if (res.data?.birth_date !== cleanedProfile.birth_date) {
+        setError(t('birthDateNotSaved'));
+        return;
+      }
       if (onSave) onSave();
       if (onClose) onClose();
     } catch (err) {
@@ -314,9 +322,11 @@ function HealthProfileForm({ onClose, onSave }) {
             <h3>{t('basicData')}</h3>
             <div className="form-grid">
               <div className="form-group">
-                <label htmlFor="age-input">{t('age')} *</label>
-                <input id="age-input" type="number" name="age" value={profile.age} onChange={handleChange} required className={fieldErrors.age ? 'input-error' : ''} />
-                {fieldErrors.age && <span className="error-text">{fieldErrors.age}</span>}
+                <label htmlFor="birth-date-input">{t('birthDate')} *</label>
+                <input id="birth-date-input" type="date" name="birth_date" value={profile.birth_date} onChange={handleChange} required className={fieldErrors.birth_date ? 'input-error' : ''} />
+                {ageFromBirthDate(profile.birth_date) !== null && <span>{t('age')}: {ageFromBirthDate(profile.birth_date)} {t('years')}</span>}
+                {!profile.birth_date && profile.age > 0 && <span>{t('addBirthDate')}</span>}
+                {fieldErrors.birth_date && <span className="error-text">{fieldErrors.birth_date}</span>}
               </div>
               <div className="form-group">
                 <label htmlFor="sex-input">{t('sex')} *</label>

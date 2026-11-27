@@ -91,7 +91,9 @@ CREATE TABLE messages (
     recipient_id INTEGER REFERENCES users(id),
     content TEXT NOT NULL,
     is_read BOOLEAN DEFAULT FALSE,
-    created_at TEXT
+    created_at TEXT,
+    message_type TEXT,
+    clinical_patient_id INTEGER REFERENCES users(id)
 );
 
 CREATE TABLE deleted_messages (
@@ -106,6 +108,7 @@ CREATE TABLE health_profiles (
     id SERIAL PRIMARY KEY,
     user_id INTEGER UNIQUE REFERENCES users(id),
     age INTEGER,
+    birth_date TEXT,
     sex TEXT,
     height DOUBLE PRECISION,
     current_weight DOUBLE PRECISION,
@@ -176,6 +179,15 @@ CREATE TABLE gemini_reports (
     user_id INTEGER NOT NULL REFERENCES users(id),
     response_text TEXT NOT NULL,
     reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE feedback (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    subject TEXT NOT NULL,
+    message TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

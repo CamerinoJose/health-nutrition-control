@@ -77,6 +77,7 @@ func TestDeleteAccountDataRemovesOnlyTargetAccountData(t *testing.T) {
 		`CREATE TEMP TABLE push_tokens (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id))`,
 		`CREATE TEMP TABLE social_accounts (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id))`,
 		`CREATE TEMP TABLE gemini_reports (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id))`,
+		`CREATE TEMP TABLE feedback (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id))`,
 		`CREATE TEMP TABLE admin_audit_logs (id INTEGER PRIMARY KEY, admin_user_id INTEGER REFERENCES users(id), target_user_id INTEGER)`,
 	}
 	for _, statement := range tables {
@@ -105,6 +106,7 @@ func TestDeleteAccountDataRemovesOnlyTargetAccountData(t *testing.T) {
 		`INSERT INTO push_tokens VALUES (1, 1), (2, 2)`,
 		`INSERT INTO social_accounts VALUES (1, 1), (2, 2)`,
 		`INSERT INTO gemini_reports VALUES (1, 1), (2, 2)`,
+		`INSERT INTO feedback VALUES (1, 1), (2, 2)`,
 		`INSERT INTO admin_audit_logs VALUES (1, 2, 1), (2, 1, 2)`,
 	}
 	for _, statement := range inserts {
@@ -127,6 +129,10 @@ func TestDeleteAccountDataRemovesOnlyTargetAccountData(t *testing.T) {
 	}
 	if remainingUsers != 1 {
 		t.Fatalf("expected one unrelated user to remain, got %d", remainingUsers)
+	}
+	var retainedFeedback int
+	if err := testDB.QueryRow(`SELECT COUNT(*) FROM feedback WHERE user_id = 2`).Scan(&retainedFeedback); err != nil || retainedFeedback != 1 {
+		t.Fatalf("expected unrelated feedback to remain: count=%d err=%v", retainedFeedback, err)
 	}
 
 	var retainedNutritionistID sql.NullInt64
@@ -166,6 +172,7 @@ func TestDeleteAccountDataRemovesOnlyTargetAccountData(t *testing.T) {
 		{"push tokens", `SELECT COUNT(*) FROM push_tokens WHERE user_id = 1`},
 		{"social accounts", `SELECT COUNT(*) FROM social_accounts WHERE user_id = 1`},
 		{"Gemini reports", `SELECT COUNT(*) FROM gemini_reports WHERE user_id = 1`},
+		{"feedback", `SELECT COUNT(*) FROM feedback WHERE user_id = 1`},
 		{"audit logs", `SELECT COUNT(*) FROM admin_audit_logs WHERE admin_user_id = 1 OR target_user_id = 1`},
 	}
 	for _, check := range remainingQueries {

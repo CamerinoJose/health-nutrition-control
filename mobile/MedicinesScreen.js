@@ -3,7 +3,7 @@ import { View, Text, TextInput, FlatList, StyleSheet, TouchableOpacity, Activity
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { getToken } from './src/auth';
+import { getActiveAccountId, getToken } from './src/auth';
 import { DEFAULT_MEAL_TIMES, loadMealTimes, normalizeMealTimes } from './src/mealTimes';
 import { DEFAULT_REMINDER_SETTINGS, loadReminderSettings, saveReminderSettings } from './src/reminderSettings';
 import api from './src/api';
@@ -12,7 +12,6 @@ import { scheduleNextMedicineReminder, openReminder } from './src/reminderAlarm'
 const BACKEND_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://health-nutrition-control.onrender.com').replace(/\/api$/, '');
 const API_BASE = `${BACKEND_URL}/api`;
 const MEDICINES_CACHE_PREFIX = 'bienestar_medicines_v1:';
-const USER_ID_CACHE_KEY = 'bienestar_user_id';
 const MEDICINE_NOTIF_IDS_KEY = 'bienestar_medicine_notif_ids_v1';
 
 function formatHHMMFromMinutes(totalMinutes) {
@@ -43,6 +42,7 @@ export default function MedicinesScreen({ onBack }) {
   });
 
   const [loading, setLoading] = useState(false);
+  const [medicinesVerified, setMedicinesVerified] = useState(false);
 
   function computeRelativeTime(mealKey, whenKey) {
     const normalized = normalizeMealTimes(mealTimes);
@@ -58,9 +58,14 @@ export default function MedicinesScreen({ onBack }) {
   useEffect(() => {
     let isMounted = true;
     (async () => {
-      const saved = await loadMealTimes();
-      if (!isMounted) return;
-      setMealTimes(saved);
+      try {
+        const accountId = await getActiveAccountId();
+        const saved = await loadMealTimes(accountId);
+        if (!isMounted) return;
+        setMealTimes(saved);
+      } catch (error) {
+        if (isMounted) Alert.alert('Error', 'No se pudieron cargar los horarios de comidas.');
+      }
     })();
     return () => {
       isMounted = false;
@@ -70,7 +75,14 @@ export default function MedicinesScreen({ onBack }) {
   useEffect(() => {
     let isMounted = true;
     (async () => {
-      const settings = await loadReminderSettings();
+      let accountId;
+      try {
+        accountId = await getActiveAccountId();
+      } catch (error) {
+        if (isMounted) Alert.alert('Error', 'No se pudieron cargar los ajustes de recordatorios.');
+        return;
+      }
+      const settings = await loadReminderSettings(accountId);
       if (!isMounted) return;
       setMealOffsetMinutes(settings.medicineMealOffsetMinutes);
 
@@ -82,7 +94,7 @@ export default function MedicinesScreen({ onBack }) {
         const parsed = Math.trunc(Number(serverOffset));
         if (Number.isFinite(parsed)) {
           const clamped = Math.max(1, Math.min(180, parsed));
-          await saveReminderSettings({ ...settings, medicineMealOffsetMinutes: clamped });
+          await saveReminderSettings({ ...settings, medicineMealOffsetMinutes: clamped }, accountId);
           if (!isMounted) return;
           setMealOffsetMinutes(clamped);
         }
@@ -100,8 +112,15 @@ export default function MedicinesScreen({ onBack }) {
     if (!Number.isFinite(parsed)) return;
     const clamped = Math.max(1, Math.min(180, parsed));
     setMealOffsetMinutes(clamped);
-    const current = await loadReminderSettings();
-    const saved = await saveReminderSettings({ ...current, medicineMealOffsetMinutes: clamped });
+    let accountId;
+    try {
+      accountId = await getActiveAccountId();
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo identificar la cuenta para guardar el horario.');
+      return;
+    }
+    const current = await loadReminderSettings(accountId);
+    const saved = await saveReminderSettings({ ...current, medicineMealOffsetMinutes: clamped }, accountId);
 
     // Best-effort: persist to server, preserving other fields
     try {
@@ -122,60 +141,32 @@ export default function MedicinesScreen({ onBack }) {
     }
   }
 
-  async function getUserIdForCache(token) {
-    try {
-      const cached = await AsyncStorage.getItem(USER_ID_CACHE_KEY);
-      if (cached) return cached;
-    } catch (_) {
-      // ignore
-    }
-
-    try {
-      const res = await fetch(`${API_BASE}/me`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (!res.ok) return null;
-      const data = await res.json().catch(() => null);
-      const userId = data?.user_id ?? data?.id;
-      if (userId != null) {
-        const asString = String(userId);
-        try {
-          await AsyncStorage.setItem(USER_ID_CACHE_KEY, asString);
-        } catch (_) {
-          // ignore
-        }
-        return asString;
-      }
-      return null;
-    } catch (_) {
-      return null;
-    }
+  async function getMedicinesCacheKey() {
+    const userId = await getActiveAccountId();
+    return userId ? `${MEDICINES_CACHE_PREFIX}${userId}` : null;
   }
 
-  async function getMedicinesCacheKey(token) {
-    const userId = await getUserIdForCache(token);
-    return `${MEDICINES_CACHE_PREFIX}${userId || 'default'}`;
-  }
-
-  async function loadMedicinesFromCache(token) {
+  async function loadMedicinesFromCache() {
     try {
-      const key = await getMedicinesCacheKey(token);
+      const key = await getMedicinesCacheKey();
+      if (!key) return null;
       const raw = await AsyncStorage.getItem(key);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return parsed;
       return null;
-    } catch (_) {
+    } catch (error) {
+      console.warn('No se pudo leer la caché de medicinas.');
       return null;
     }
   }
 
-  async function saveMedicinesToCache(token, meds) {
+  async function saveMedicinesToCache(meds) {
     try {
-      const key = await getMedicinesCacheKey(token);
-      await AsyncStorage.setItem(key, JSON.stringify(Array.isArray(meds) ? meds : []));
-    } catch (_) {
-      // ignore
+      const key = await getMedicinesCacheKey();
+      if (key) await AsyncStorage.setItem(key, JSON.stringify(meds));
+    } catch (error) {
+      console.warn('No se pudo guardar la caché de medicinas.');
     }
   }
   const fetchHistorial = (token) => {
@@ -190,11 +181,12 @@ export default function MedicinesScreen({ onBack }) {
         return res.json();
       })
       .then(data => setHistorial(Array.isArray(data) ? data : []))
-      .catch(() => setHistorial([]));
+      .catch(() => Alert.alert('Aviso', 'No se pudo actualizar el historial de medicinas.'));
   };
 
   const fetchMedicinas = async () => {
     setLoading(true);
+    setMedicinesVerified(false);
     const token = await getToken();
     if (!token) {
       Alert.alert('Sesión', 'No se encontró sesión activa. Vuelve a iniciar sesión.');
@@ -203,8 +195,7 @@ export default function MedicinesScreen({ onBack }) {
       return;
     }
 
-    // Load cached meds first for a stable UX (and to survive backend resets)
-    const cached = await loadMedicinesFromCache(token);
+    const cached = await loadMedicinesFromCache();
     if (Array.isArray(cached) && cached.length > 0) {
       setMedicinas(cached);
     }
@@ -224,20 +215,15 @@ export default function MedicinesScreen({ onBack }) {
         throw new Error(errorData.error || `Error ${res.status} al consultar medicinas`);
       }
 
-      const data = await res.json().catch(() => []);
-      const serverMeds = Array.isArray(data) ? data : [];
-
-      // If server returns empty but we have cache, prefer cache to avoid "losing" items after a server reset.
-      if (serverMeds.length === 0 && Array.isArray(cached) && cached.length > 0) {
-        setMedicinas(cached);
-      } else {
-        setMedicinas(serverMeds);
-        await saveMedicinesToCache(token, serverMeds);
-      }
+      const data = await res.json();
+      if (data !== null && !Array.isArray(data)) throw new Error('El servidor devolvió una lista de medicinas inválida.');
+      const serverMedicines = data === null ? [] : data;
+      setMedicinas(serverMedicines);
+      setMedicinesVerified(true);
+      await saveMedicinesToCache(serverMedicines);
 
       await fetchHistorial(token);
     } catch (err) {
-      // Keep whatever we have (prefer cache) instead of clearing
       if (!(Array.isArray(cached) && cached.length > 0)) {
         setMedicinas([]);
       }
@@ -575,6 +561,15 @@ export default function MedicinesScreen({ onBack }) {
         </View>
       ) : null}
 
+      {!loading && !medicinesVerified && (
+        <View>
+          <Text accessibilityRole="alert">No se pudo verificar la lista con el servidor. La copia local puede estar desactualizada; no confirma ninguna toma.</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={fetchMedicinas}>
+            <Text>Reintentar</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {loading ? (
         <ActivityIndicator size="large" color="#3b82f6" style={{ marginTop: 24 }} />
       ) : (
@@ -582,7 +577,7 @@ export default function MedicinesScreen({ onBack }) {
           data={medicinas}
           keyExtractor={(_, i) => i.toString()}
           style={{ flex: 1 }}
-          ListEmptyComponent={<Text style={styles.empty}>No hay medicinas registradas</Text>}
+          ListEmptyComponent={<Text style={styles.empty}>{medicinesVerified ? 'No hay medicinas registradas' : 'No hay una copia local disponible.'}</Text>}
           ListFooterComponent={
             historialFiltrado.length > 0 ? (
               <View style={styles.historyBox}>
@@ -617,7 +612,7 @@ export default function MedicinesScreen({ onBack }) {
             <View style={styles.medicineRow}>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 15 }}>💊 {item.name}</Text>
-                <TouchableOpacity accessibilityRole="button" disabled={loading} onPress={() => programarAlarmaPersistente(item)}>
+                <TouchableOpacity accessibilityRole="button" disabled={loading || !medicinesVerified} onPress={() => programarAlarmaPersistente(item)}>
                   <Text style={{ color: '#1d4ed8', paddingVertical: 10 }}>🔔 Alarma persistente: próxima toma</Text>
                 </TouchableOpacity>
               </View>
@@ -625,7 +620,7 @@ export default function MedicinesScreen({ onBack }) {
               <TouchableOpacity
                 style={[styles.confirmBtn, item.taken && styles.confirmBtnDone]}
                 onPress={() => !item.taken && marcarTomada(index)}
-                disabled={item.taken}
+                disabled={item.taken || !medicinesVerified}
               >
                 <Text style={styles.confirmBtnText}>{item.taken ? '✓ Tomada' : 'Confirmar'}</Text>
               </TouchableOpacity>
@@ -635,10 +630,11 @@ export default function MedicinesScreen({ onBack }) {
       )}
 
       <View style={styles.bottomBar}>
+        <Text>«Hecho» en Recordatorios no registra la toma; usa Confirmar en la medicina.</Text>
         <TouchableOpacity style={styles.backBtn} onPress={() => openReminder()}>
           <Text style={styles.backBtnText}>Pendientes / ✓ Hecho</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.notifBtn} onPress={programarNotificacionesMedicinas} disabled={loading}>
+        <TouchableOpacity style={styles.notifBtn} onPress={programarNotificacionesMedicinas} disabled={loading || !medicinesVerified}>
           <Text style={styles.notifBtnText}>🔔 Programar notificación diaria</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.backBtn} onPress={onBack}>

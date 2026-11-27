@@ -13,9 +13,6 @@ import {
 import { useTranslation } from 'react-i18next';
 import api from './api';
 
-// Default support recipient so users can start a chat even without prior conversations
-const SUPPORT_USER_ID = 1;
-
 export default function MessagesScreen({ onNavigate, profile }) {
   const { t } = useTranslation();
   const [conversations, setConversations] = useState([]);
@@ -24,6 +21,7 @@ export default function MessagesScreen({ onNavigate, profile }) {
   const [archivedMessages, setArchivedMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [restrictedLegacy, setRestrictedLegacy] = useState(false);
   const [activeTab, setActiveTab] = useState('active'); // active | archived
 
   const currentUserId = profile?.user_id ?? profile?.id;
@@ -35,15 +33,6 @@ export default function MessagesScreen({ onNavigate, profile }) {
   const isInitialLoad = React.useRef(true);
 
   useEffect(() => {
-    console.log('[MessagesScreen] Profile updated:', {
-      currentUserId,
-      nutritionist_id: profile?.nutritionist_id,
-      nutritionist_name: profile?.nutritionist_name,
-      nutritionistTarget
-    });
-  }, [profile]);
-
-  useEffect(() => {
     loadConversations();
     if (selectedConversation) {
       loadMessages(selectedConversation.user_id);
@@ -52,7 +41,6 @@ export default function MessagesScreen({ onNavigate, profile }) {
 
   useEffect(() => {
     if (nutritionistTarget && (!selectedConversation || selectedConversation.user_id !== nutritionistTarget.id)) {
-      console.log('[MessagesScreen] Auto-opening nutritionist chat');
       startNutritionistChat();
     }
   }, [nutritionistTarget?.id]);
@@ -64,9 +52,8 @@ export default function MessagesScreen({ onNavigate, profile }) {
     try {
       // Note: This is a client-side delete. Backend doesn't have a delete endpoint yet
       setConversations(conversations.filter(c => c.user_id !== userId));
-      console.log('[MessagesScreen] Conversation with user', userId, 'deleted');
     } catch (err) {
-      console.error('Error deleting conversation:', err);
+      console.error('Error deleting conversation:', err?.response?.status);
     }
   };
 
@@ -81,7 +68,7 @@ export default function MessagesScreen({ onNavigate, profile }) {
     try {
       const res = await api.get('/messages/conversations');
       const conversationsData = Array.isArray(res.data) ? res.data : [];
-      console.log('loadConversations response:', res.data, 'parsed:', conversationsData);
+      setRestrictedLegacy(res.headers?.['x-restricted-legacy-messages'] === 'true');
       setConversations(conversationsData);
 
       // Only auto-select on initial load
@@ -98,7 +85,7 @@ export default function MessagesScreen({ onNavigate, profile }) {
         isInitialLoad.current = false;
       }
     } catch (err) {
-      console.error('Error loading conversations:', err);
+      console.error('Error loading conversations:', err?.response?.status);
       setConversations([]);
     } finally {
       setLoading(false);
@@ -106,14 +93,13 @@ export default function MessagesScreen({ onNavigate, profile }) {
   };
 
   const loadMessages = async (otherUserId) => {
-    console.log('[MessagesScreen] loadMessages for user', otherUserId);
     try {
       const res = await api.get(`/messages?user_id=${otherUserId}`);
       setMessages(res.data || []);
       // Also load archived messages
       loadArchivedMessages(otherUserId);
     } catch (err) {
-      console.error('Error loading messages:', err);
+      console.error('Error loading messages:', err?.response?.status);
     }
   };
 
@@ -122,13 +108,12 @@ export default function MessagesScreen({ onNavigate, profile }) {
       const res = await api.get(`/messages/archived?user_id=${otherUserId}`);
       setArchivedMessages(res.data || []);
     } catch (err) {
-      console.error('Error loading archived messages:', err);
+      console.error('Error loading archived messages:', err?.response?.status);
       setArchivedMessages([]);
     }
   };
 
   const selectConversation = (conversation) => {
-    console.log('[MessagesScreen] Selecting conversation', conversation);
     setSelectedConversation(conversation);
     loadMessages(conversation.user_id);
   };
@@ -138,7 +123,6 @@ export default function MessagesScreen({ onNavigate, profile }) {
       alert('Aún no tienes un nutriólogo asignado.');
       return;
     }
-    console.log('[MessagesScreen] startNutritionistChat ->', nutritionistTarget);
     const conversation = { user_id: nutritionistTarget.id, user_name: nutritionistTarget.name };
     setSelectedConversation(conversation);
     setMessages([]); // show thread immediately
@@ -146,11 +130,17 @@ export default function MessagesScreen({ onNavigate, profile }) {
     setTimeout(() => loadMessages(conversation.user_id), 50);
   };
 
-  const startSupportChat = () => {
-    const conversation = { user_id: SUPPORT_USER_ID, user_name: 'Soporte' };
-    console.log('[MessagesScreen] startSupportChat');
-    setSelectedConversation(conversation);
-    loadMessages(conversation.user_id);
+  const startSupportChat = async () => {
+    try {
+      const res = await api.get('/support');
+      if (!Number.isInteger(res.data?.id) || res.data.id <= 0) throw new Error('Invalid support account');
+      const conversation = { user_id: res.data.id, user_name: res.data.name };
+      setSelectedConversation(conversation);
+      loadMessages(conversation.user_id);
+    } catch (err) {
+      console.error('Error opening support chat:', err?.response?.status);
+      alert(t('supportUnavailable'));
+    }
   };
 
   const deleteMessage = async (messageId) => {
@@ -166,7 +156,7 @@ export default function MessagesScreen({ onNavigate, profile }) {
       loadConversations();
       alert('✅ Mensaje movido al historial');
     } catch (err) {
-      console.error('Error deleting message:', err);
+      console.error('Error deleting message:', err?.response?.status);
       alert('❌ Error al mover mensaje');
     }
   };
@@ -184,7 +174,8 @@ export default function MessagesScreen({ onNavigate, profile }) {
       setNewMessage('');
       loadConversations();
     } catch (err) {
-      console.error('Error sending message:', err);
+      console.error('Error sending message:', err?.response?.status);
+      alert(t('messageSendFailed'));
     }
   };
 
@@ -215,6 +206,7 @@ export default function MessagesScreen({ onNavigate, profile }) {
         </TouchableOpacity>
       </View>
 
+      {restrictedLegacy && <Text style={styles.warning} accessibilityRole="alert">{t('restrictedLegacyMessages')}</Text>}
       {selectedConversation ? (
         <View style={styles.content}>
           <View style={styles.conversationHeader}>
@@ -400,6 +392,12 @@ const styles = StyleSheet.create({
     color: '#3498db',
     fontSize: 18,
     fontWeight: '700',
+  },
+  warning: {
+    padding: 12,
+    backgroundColor: '#fff3cd',
+    color: '#664d03',
+    fontSize: 14,
   },
   emptyState: {
     flex: 1,

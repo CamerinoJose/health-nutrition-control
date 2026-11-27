@@ -163,6 +163,7 @@ function AppContent() {
   const [loadingAppointments, setLoadingAppointments] = useState(false)
   const [selectedMeal, setSelectedMeal] = useState(null)
   const drawerAnim = useRef(new Animated.Value(-260)).current
+  const reminderCenterRef = useRef(null)
   const [imageError, setImageError] = useState(false)
   // home | login | register | dashboard | mealplan | progress | achievements | recipes | appointments | messages | support | settings | gemini
 
@@ -1176,11 +1177,12 @@ function AppContent() {
         </TouchableOpacity>
       </View>
       {renderContent()}
-      <ReminderCenter hidden={view === 'medicinas' || view === 'diabetesNotifications'} />
+      <ReminderCenter ref={reminderCenterRef} />
       {/* Drawer lateral */}
       {drawerOpen && (
         <View style={styles.drawerOverlay}>
           <Animated.View style={[styles.drawerPane, { transform: [{ translateX: drawerAnim }] }]}> 
+            <ScrollView contentContainerStyle={{ paddingBottom: 16 }}>
             <Text style={{fontWeight: 'bold', fontSize: 18, marginBottom: 16}}>Menú</Text>
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('home'); closeDrawer(); }}>
               <Text style={styles.navButtonText}>🏠 Inicio</Text>
@@ -1203,12 +1205,16 @@ function AppContent() {
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('gemini'); closeDrawer(); }}>
               <Text style={styles.navButtonText}>✨ Gemini AI</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.navButton} onPress={() => { closeDrawer(); reminderCenterRef.current?.open(); }}>
+              <Text style={styles.navButtonText}>🔔 Recordatorios</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('settings'); closeDrawer(); }}>
               <Text style={styles.navButtonText}>⚙️ Ajustes</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
               <Text style={styles.logoutText}>Cerrar sesión</Text>
             </TouchableOpacity>
+            </ScrollView>
           </Animated.View>
           <TouchableOpacity style={styles.drawerBackdrop} onPress={closeDrawer} />
         </View>

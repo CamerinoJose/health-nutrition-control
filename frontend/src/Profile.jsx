@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import api from './api';
 import HealthProfileForm from './HealthProfileForm';
+import { ageFromBirthDate } from './age';
 import './profile.css';
 
 export default function Profile({ token, profile }) {
@@ -341,7 +342,9 @@ export default function Profile({ token, profile }) {
             <>
               <div className="info-item">
                 <label>{t('age')}:</label>
-                <span>{healthProfile.age} {t('years')}</span>
+                <span>{healthProfile.birth_date
+                  ? `${ageFromBirthDate(healthProfile.birth_date) ?? t('notAvailable')} ${t('years')}`
+                  : `${healthProfile.age || t('notAvailable')} (${t('legacyAge')})`}</span>
               </div>
               <div className="info-item">
                 <label>{t('sex')}:</label>

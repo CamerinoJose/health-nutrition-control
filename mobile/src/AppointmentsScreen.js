@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,18 +10,34 @@ import {
   TextInput,
   SafeAreaView,
   Alert,
-  FlatList
+  FlatList,
+  Platform
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import api from './api';
+
+const pad = value => String(value).padStart(2, '0');
+const formatDate = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+const formatTime = date => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+
+function localAppointmentDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(value);
+}
 
 export default function AppointmentsScreen({ onNavigate }) {
   const { t } = useTranslation();
   const [appointments, setAppointments] = useState([]);
   const [archivedAppointments, setArchivedAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [activeTab, setActiveTab] = useState('active'); // active | archived
   const [showModal, setShowModal] = useState(false);
+  const [picker, setPicker] = useState(null);
+  const [pickerDate, setPickerDate] = useState(new Date());
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -29,7 +45,7 @@ export default function AppointmentsScreen({ onNavigate }) {
     appointment_time: '',
     notes: ''
   });
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState(formatDate(new Date()).slice(0, 7));
 
   useEffect(() => {
     loadAppointments();
@@ -47,29 +63,75 @@ export default function AppointmentsScreen({ onNavigate }) {
       const archivedUrl = `/appointments?archived=true`;
       const archivedResponse = await api.get(archivedUrl);
       setArchivedAppointments(archivedResponse.data || []);
+      setLoadError(false);
     } catch (error) {
       console.error('Error loading appointments:', error);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
   };
 
   const handleCreateAppointment = async () => {
-    if (!form.title || !form.appointment_date) {
+    if (submittingRef.current) return;
+    if (!form.title.trim() || !form.appointment_date || !form.appointment_time) {
       Alert.alert('Error', 'Completa los campos requeridos');
       return;
     }
 
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
-      await api.post('/appointments', form);
-      loadAppointments();
+      await api.post('/appointments', { ...form, title: form.title.trim() });
+      const month = form.appointment_date.slice(0, 7);
+      if (month === selectedMonth) {
+        loadAppointments();
+      } else {
+        setSelectedMonth(month);
+      }
       setShowModal(false);
       setForm({ title: '', description: '', appointment_date: '', appointment_time: '', notes: '' });
       Alert.alert('Éxito', 'Cita creada correctamente');
     } catch (error) {
       console.error('Error creating appointment:', error);
-      Alert.alert('Error', 'No se pudo crear la cita');
+      const needsNutritionist = error.response?.data?.error === 'please assign a nutritionist before booking';
+      Alert.alert('Error', needsNutritionist
+        ? 'Primero asigna un nutriólogo a tu cuenta para poder agendar.'
+        : 'No se pudo crear la cita. Revisa tu conexión y vuelve a intentarlo.');
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
+  };
+
+  const openPicker = (mode) => {
+    const value = new Date();
+    if (form.appointment_date) {
+      const selectedDate = localAppointmentDate(form.appointment_date);
+      value.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+    }
+    if (form.appointment_time) {
+      const [hours, minutes] = form.appointment_time.split(':').map(Number);
+      value.setHours(hours, minutes, 0, 0);
+    }
+    setPickerDate(value);
+    setPicker(mode);
+  };
+
+  const handlePickerChange = (event, chosen) => {
+    if (Platform.OS !== 'ios') setPicker(null);
+    if (event.type === 'dismissed' || !chosen) return;
+    setPickerDate(chosen);
+    setForm(current => ({
+      ...current,
+      [picker === 'date' ? 'appointment_date' : 'appointment_time']:
+        picker === 'date' ? formatDate(chosen) : formatTime(chosen),
+    }));
+  };
+
+  const closeModal = () => {
+    setPicker(null);
+    setShowModal(false);
   };
 
   const handleDeleteAppointment = async (id) => {
@@ -117,7 +179,7 @@ export default function AppointmentsScreen({ onNavigate }) {
         </TouchableOpacity>
       </View>
       <Text style={styles.appointmentDate}>
-        📅 {new Date(item.appointment_date).toLocaleDateString('es-ES')}
+        📅 {localAppointmentDate(item.appointment_date).toLocaleDateString('es-ES')}
       </Text>
       {item.appointment_time && (
         <Text style={styles.appointmentTime}>🕐 {item.appointment_time}</Text>
@@ -175,6 +237,13 @@ export default function AppointmentsScreen({ onNavigate }) {
         </TouchableOpacity>
       </View>
 
+      {loadError && (
+        <View>
+          <Text accessibilityRole="alert">No se pudieron actualizar las citas. La lista puede estar incompleta.</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={loadAppointments}><Text>Reintentar</Text></TouchableOpacity>
+        </View>
+      )}
+
       <FlatList
         data={activeTab === 'active' ? appointments : archivedAppointments}
         keyExtractor={item => item.id.toString()}
@@ -184,7 +253,7 @@ export default function AppointmentsScreen({ onNavigate }) {
         })}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
+          !loadError && <View style={styles.emptyState}>
             <Text style={styles.emptyText}>
               {activeTab === 'active' ? '📅 Sin citas programadas' : '📭 Sin citas archivadas'}
             </Text>
@@ -204,11 +273,11 @@ export default function AppointmentsScreen({ onNavigate }) {
         visible={showModal}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowModal(false)}
+        onRequestClose={closeModal}
       >
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowModal(false)}>
+            <TouchableOpacity onPress={closeModal}>
               <Text style={styles.closeBtn}>✕</Text>
             </TouchableOpacity>
             <Text style={styles.modalTitle}>Nueva Cita</Text>
@@ -229,25 +298,56 @@ export default function AppointmentsScreen({ onNavigate }) {
 
             <View style={styles.formGroup}>
               <Text style={styles.label}>Fecha</Text>
-              <TextInput
+              <TouchableOpacity
                 style={styles.input}
-                placeholder="YYYY-MM-DD"
-                value={form.appointment_date}
-                onChangeText={text => setForm({ ...form, appointment_date: text })}
-                placeholderTextColor="#999"
-              />
+                accessibilityRole="button"
+                accessibilityLabel="Seleccionar fecha"
+                onPress={() => openPicker('date')}
+              >
+                <Text style={!form.appointment_date && styles.placeholder}>
+                  {form.appointment_date ? localAppointmentDate(form.appointment_date).toLocaleDateString('es-ES') : 'Seleccionar fecha'}
+                </Text>
+              </TouchableOpacity>
             </View>
 
             <View style={styles.formGroup}>
-              <Text style={styles.label}>Hora (Opcional)</Text>
-              <TextInput
+              <Text style={styles.label}>Hora</Text>
+              <TouchableOpacity
                 style={styles.input}
-                placeholder="HH:MM"
-                value={form.appointment_time}
-                onChangeText={text => setForm({ ...form, appointment_time: text })}
-                placeholderTextColor="#999"
-              />
+                accessibilityRole="button"
+                accessibilityLabel="Seleccionar hora"
+                onPress={() => openPicker('time')}
+              >
+                <Text style={!form.appointment_time && styles.placeholder}>
+                  {form.appointment_time || 'Seleccionar hora'}
+                </Text>
+              </TouchableOpacity>
             </View>
+
+            {picker && (
+              <View>
+                <DateTimePicker
+                  testID="appointment-picker"
+                  value={pickerDate}
+                  mode={picker}
+                  is24Hour
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={handlePickerChange}
+                />
+                {Platform.OS === 'ios' && (
+                  <TouchableOpacity onPress={() => {
+                    setForm(current => ({
+                      ...current,
+                      [picker === 'date' ? 'appointment_date' : 'appointment_time']:
+                        picker === 'date' ? formatDate(pickerDate) : formatTime(pickerDate),
+                    }));
+                    setPicker(null);
+                  }}>
+                    <Text>Listo</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
 
             <View style={styles.formGroup}>
               <Text style={styles.label}>Descripción</Text>
@@ -262,8 +362,8 @@ export default function AppointmentsScreen({ onNavigate }) {
               />
             </View>
 
-            <TouchableOpacity style={styles.submitBtn} onPress={handleCreateAppointment}>
-              <Text style={styles.submitBtnText}>Crear Cita</Text>
+            <TouchableOpacity style={styles.submitBtn} onPress={handleCreateAppointment} disabled={submitting}>
+              <Text style={styles.submitBtnText}>{submitting ? 'Guardando...' : 'Crear Cita'}</Text>
             </TouchableOpacity>
           </ScrollView>
         </SafeAreaView>
@@ -441,6 +541,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     color: '#333',
+  },
+  placeholder: {
+    color: '#999',
   },
   textArea: {
     textAlignVertical: 'top',

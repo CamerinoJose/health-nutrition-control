@@ -49,7 +49,7 @@ sin sustituir Expo para los recordatorios actuales ni cambiar el backend.
 - `src/reminderAlarm.js`: API genérica, validación, identidad de instancia,
   permisos, ruta de notificación y adaptador de próxima toma.
 - `src/ReminderCenter.js`: formulario local, lista de pendientes, estado de
-  permisos, cancelar y **✓ Hecho**. Accesible con el botón flotante 🔔.
+  permisos, cancelar y **✓ Hecho**. Accesible desde **Recordatorios** en el menú.
 - `android/app/src/main/java/com/bienestarappmobile/reminders/ReminderEngine.java`:
   máquina de estados independiente de Android, con interfaces de persistencia y
   programación para probar la lógica real.
