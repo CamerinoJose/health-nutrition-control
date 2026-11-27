@@ -356,6 +356,9 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 	if email == "" || providerUserID == "" {
 		return 0, "", fmt.Errorf("OAuth profile did not include a usable email or provider ID")
 	}
+	if isDefaultAccountEmail(email) {
+		return 0, "", fmt.Errorf("account is unavailable")
+	}
 
 	// Buscar si ya existe vinculación
 	var userID int
@@ -382,6 +385,14 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 			return 0, "", err
 		}
 
+		var disabled bool
+		if err := queryRowDB("SELECT is_disabled FROM users WHERE id = ?", userID).Scan(&disabled); err != nil {
+			return 0, "", err
+		}
+		if disabled {
+			return 0, "", fmt.Errorf("account is unavailable")
+		}
+
 		// Crear la vinculación social para usuarios nuevos o existentes.
 		_, err = execDB(
 			"INSERT INTO social_accounts (user_id, provider, provider_user_id, email, name, avatar_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
@@ -395,8 +406,12 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 	}
 
 	var storedName, storedEmail, storedRole string
-	if err := queryRowDB("SELECT name, email, role FROM users WHERE id = ?", userID).Scan(&storedName, &storedEmail, &storedRole); err != nil {
+	var disabled bool
+	if err := queryRowDB("SELECT name, email, role, is_disabled FROM users WHERE id = ?", userID).Scan(&storedName, &storedEmail, &storedRole, &disabled); err != nil {
 		return 0, "", err
+	}
+	if disabled || isDefaultAccountEmail(storedEmail) {
+		return 0, "", fmt.Errorf("account is unavailable")
 	}
 	if storedName != "" {
 		name = storedName

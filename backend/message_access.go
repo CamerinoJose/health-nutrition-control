@@ -134,7 +134,7 @@ func getSupportHandler(c *gin.Context) {
 		return
 	}
 	var id int
-	err := queryRowDB(`SELECT id FROM users WHERE LOWER(email) = ? AND role = 'admin'`, email).Scan(&id)
+	err := queryRowDB(`SELECT id FROM users WHERE LOWER(email) = ? AND role = 'admin' AND is_disabled = FALSE`, email).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "support is unavailable"})
 		return

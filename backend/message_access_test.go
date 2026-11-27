@@ -27,8 +27,8 @@ func TestMessageAccessPostgres(t *testing.T) {
 	testDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = testDB.Close() })
 	for _, statement := range []string{
-		`CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, name TEXT, role TEXT, nutritionist_id INTEGER, email TEXT)`,
-		`INSERT INTO users VALUES
+		`CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, name TEXT, role TEXT, nutritionist_id INTEGER, email TEXT, is_disabled BOOLEAN NOT NULL DEFAULT FALSE)`,
+		`INSERT INTO users (id, name, role, nutritionist_id, email) VALUES
 			(1, 'Patient', 'user', 2, 'patient@example.test'), (2, 'Professional', 'nutritionist', NULL, 'professional@example.test'),
 			(3, 'Other patient', 'user', 4, 'other@example.test'), (4, 'Other professional', 'nutritionist', NULL, 'other-professional@example.test'),
 			(5, 'Support', 'admin', NULL, 'support@example.test'), (6, 'Other admin', 'admin', NULL, 'other-admin@example.test')`,
@@ -189,12 +189,19 @@ func TestMessageAccessPostgres(t *testing.T) {
 	if res := request(http.MethodGet, "/support", ""); res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("non-admin support configuration: %d", res.Code)
 	}
+	t.Setenv("SUPPORT_EMAIL", "support@example.test")
+	if _, err := testDB.Exec(`UPDATE users SET is_disabled = TRUE WHERE id = 5`); err != nil {
+		t.Fatal(err)
+	}
+	if res := request(http.MethodGet, "/support", ""); res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled support configuration: %d", res.Code)
+	}
 }
 
 func TestAuthMiddlewareRejectsChangedRolePostgres(t *testing.T) {
 	testDB := openTemporaryPostgres(t)
-	if _, err := testDB.Exec(`CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, role TEXT);
-		INSERT INTO users VALUES (1, 'user')`); err != nil {
+	if _, err := testDB.Exec(`CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, role TEXT, is_disabled BOOLEAN NOT NULL DEFAULT FALSE);
+		INSERT INTO users (id, role) VALUES (1, 'user')`); err != nil {
 		t.Fatal(err)
 	}
 	previousDB, previousKey := db, jwtKey

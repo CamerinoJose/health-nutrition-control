@@ -60,7 +60,7 @@ func TestAuthMiddlewareRejectsDeletedAccountToken(t *testing.T) {
 		_ = testDB.Close()
 		t.Fatal(err)
 	}
-	if _, err := testDB.Exec(`CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, role TEXT)`); err != nil {
+	if _, err := testDB.Exec(`CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, role TEXT, is_disabled BOOLEAN NOT NULL DEFAULT FALSE)`); err != nil {
 		_ = testDB.Close()
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func runMedicineEndpointTest(t *testing.T, driver, dsn string, sqlite bool) {
 	if sqlite {
 		idDefinition = "INTEGER PRIMARY KEY AUTOINCREMENT"
 	}
-	if _, err := testDB.Exec("CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, role TEXT)"); err != nil {
+	if _, err := testDB.Exec("CREATE TEMP TABLE users (id INTEGER PRIMARY KEY, role TEXT, is_disabled BOOLEAN NOT NULL DEFAULT FALSE)"); err != nil {
 		t.Fatalf("could not create temporary users table: %v", err)
 	}
 	if _, err := testDB.Exec("INSERT INTO users (id, role) VALUES (42, 'user')"); err != nil {

@@ -6,6 +6,7 @@ CREATE TABLE users (
     email TEXT UNIQUE,
     password TEXT,
     role TEXT,
+    is_disabled BOOLEAN NOT NULL DEFAULT FALSE,
     nutritionist_id INTEGER,
     phone TEXT,
     contact_preference TEXT

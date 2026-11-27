@@ -35,6 +35,14 @@ go run .
 Genera un valor único y aleatorio para cada entorno; no reutilices una clave de
 desarrollo ni publiques el valor. Render debe conservar su valor generado.
 
+### Protección de cuentas
+
+La recuperación de contraseña está temporalmente deshabilitada. No se crean
+cuentas predeterminadas; las cuentas de prueba conocidas se bloquean sin borrar
+sus datos. Las cuentas configuradas mediante `ADMIN_EMAIL` o
+`NUTRITIONIST_EMAIL` que conserven la contraseña predeterminada anterior también
+se bloquean. Las sesiones de cuentas bloqueadas dejan de ser válidas.
+
 ### Chat de soporte
 
 Configura `SUPPORT_EMAIL` en el entorno del backend con el correo de una cuenta

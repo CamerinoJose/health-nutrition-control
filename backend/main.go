@@ -39,33 +39,8 @@ func safeRequestLogFormatter(param gin.LogFormatterParams) string {
 		param.StatusCode, param.Latency, param.ClientIP, param.Method, param.Request.URL.Path)
 }
 
-// Simple password reset for test users (no email verification)
 func resetPasswordHandler(c *gin.Context) {
-	var req struct {
-		Email       string `json:"email" binding:"required"`
-		NewPassword string `json:"newPassword" binding:"required"`
-	}
-	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
-		return
-	}
-	var userID int
-	err := queryRowDB(`SELECT id FROM users WHERE email = ?`, req.Email).Scan(&userID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "usuario no encontrado"})
-		return
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar la contraseña"})
-		return
-	}
-	_, err = execDB(`UPDATE users SET password = ? WHERE id = ?`, string(hash), userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar la contraseña"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "contraseña actualizada"})
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "password recovery is temporarily unavailable"})
 }
 
 var db *sql.DB
@@ -352,8 +327,8 @@ func main() {
 		log.Printf("Warning: Failed to seed recipes: %v", err)
 	}
 
-	if err := seedDefaultUsers(); err != nil {
-		log.Printf("Warning: Failed to seed default users: %v", err)
+	if err := disableDefaultAccounts(); err != nil {
+		log.Fatal("Could not disable default accounts: ", err)
 	}
 
 	// Start a goroutine to check for upcoming appointments and send reminders
@@ -912,6 +887,10 @@ func migrate() error {
 		return fmt.Errorf("message access migration failed: %w", err)
 	}
 
+	if _, err := execDB(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE`); err != nil {
+		return fmt.Errorf("account status migration failed: %w", err)
+	}
+
 	// Add nutritionist_id column to appointments table if it doesn't exist
 	execDB(`ALTER TABLE appointments ADD COLUMN nutritionist_id INTEGER;`)
 
@@ -997,6 +976,10 @@ func registerHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
 		return
 	}
+	if isDefaultAccountEmail(req.Email) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no se pudo crear el usuario"})
+		return
+	}
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	var id int
@@ -1020,13 +1003,18 @@ func loginHandler(c *gin.Context) {
 	}
 
 	var u User
-	row := queryRowDB(`SELECT id,name,email,password,role FROM users WHERE email = ?`, req.Email)
-	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role); err != nil {
+	var disabled bool
+	row := queryRowDB(`SELECT id,name,email,password,role,is_disabled FROM users WHERE email = ?`, req.Email)
+	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role, &disabled); err != nil {
 		log.Printf("[Login] User not found or scan error: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "credenciales inválidas"})
 		return
 	}
 
+	if disabled || isDefaultAccountEmail(u.Email) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "credenciales inválidas"})
+		return
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(req.Password)); err != nil {
 		log.Printf("[Login] Password mismatch: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "credenciales inválidas"})
@@ -1546,7 +1534,8 @@ func authMiddleware() gin.HandlerFunc {
 		}
 		if db != nil {
 			var currentRole string
-			err := queryRowDB(`SELECT role FROM users WHERE id = ?`, claims.UserID).Scan(&currentRole)
+			var disabled bool
+			err := queryRowDB(`SELECT role, is_disabled FROM users WHERE id = ?`, claims.UserID).Scan(&currentRole, &disabled)
 			if errors.Is(err, sql.ErrNoRows) {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 					"error": "account no longer exists",
@@ -1556,6 +1545,10 @@ func authMiddleware() gin.HandlerFunc {
 			}
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "servicio no disponible"})
+				return
+			}
+			if disabled {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "account disabled", "code": "account_disabled"})
 				return
 			}
 			if currentRole != claims.Role {
@@ -3162,60 +3155,6 @@ func getRecipeHandler(c *gin.Context) {
 	})
 }
 
-func seedDefaultUsers() error {
-	adminEmail := getenvOrDefault("ADMIN_EMAIL", "admin@bienestar.test")
-	adminPassword := getenvOrDefault("ADMIN_PASSWORD", "Admin123!")
-	adminName := getenvOrDefault("ADMIN_NAME", "Admin")
-
-	nutriEmail := getenvOrDefault("NUTRITIONIST_EMAIL", "nutriologa@bienestar.test")
-	nutriPassword := getenvOrDefault("NUTRITIONIST_PASSWORD", "Nutri123!")
-	nutriName := getenvOrDefault("NUTRITIONIST_NAME", "Nutrióloga")
-
-	if err := ensureUserExists(adminEmail, adminName, adminPassword, "admin"); err != nil {
-		return err
-	}
-
-	if err := ensureUserExists(nutriEmail, nutriName, nutriPassword, "nutritionist"); err != nil {
-		return err
-	}
-
-	// Documented local test accounts (used in guides and smoke tests)
-	if err := ensureUserExists("user@test.com", "Test User", "password123", "user"); err != nil {
-		return err
-	}
-	if err := ensureUserExists("nutritionist@test.com", "Test Nutritionist", "password123", "nutritionist"); err != nil {
-		return err
-	}
-	if err := ensureUserExists("admin@test.com", "Test Admin", "password123", "admin"); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func ensureUserExists(email, name, password, role string) error {
-	var count int
-	if err := queryRowDB(`SELECT COUNT(*) FROM users WHERE email = ?`, email).Scan(&count); err != nil {
-		return err
-	}
-
-	if count > 0 {
-		return nil
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-
-	if _, err := execDB(`INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)`, name, email, string(hash), role); err != nil {
-		return err
-	}
-
-	log.Printf("[Seed] Created %s account", role)
-	return nil
-}
-
 func seedRecipes() error {
 	// Check if recipes already exist
 	var count int
@@ -4086,7 +4025,7 @@ func rejectAppointmentChangeHandler(c *gin.Context) {
 
 // --- Nutritionist Handlers (stubs) ---
 func listNutritionistsHandler(c *gin.Context) {
-	rows, err := queryDB(`SELECT id, name, email FROM users WHERE role = 'nutritionist' ORDER BY id DESC`)
+	rows, err := queryDB(`	SELECT id, name, email FROM users WHERE role = 'nutritionist' AND is_disabled = FALSE ORDER BY id DESC`)
 	if err != nil {
 		log.Printf("[Nutritionist] Error listing nutritionists: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list nutritionists"})
@@ -4132,7 +4071,7 @@ func assignNutritionistHandler(c *gin.Context) {
 
 	// Validate that the nutritionist exists and has the right role
 	var nutritionistCount int
-	if err := queryRowDB(`SELECT COUNT(*) FROM users WHERE id = ? AND role = 'nutritionist'`, req.NutritionistID).Scan(&nutritionistCount); err != nil {
+	if err := queryRowDB(`SELECT COUNT(*) FROM users WHERE id = ? AND role = 'nutritionist' AND is_disabled = FALSE`, req.NutritionistID).Scan(&nutritionistCount); err != nil {
 		log.Printf("[Nutritionist] Error validating nutritionist: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate nutritionist"})
 		return
