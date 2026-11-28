@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ageFromBirthDate } from './age';
+import api from './api';
 import { getPatients, getPatientDetails, getPatientHistory, getNutritionistAppointments, 
          updateAppointmentNotes, createRecommendation, getRecommendations,
          getRecipes, createRecipe, updateRecipe, deleteRecipe, proposeAppointmentChange, sendMessageToPatient } from './api';
@@ -16,6 +17,8 @@ import {
   Filler
 } from 'chart.js';
 import './nutritionist.css';
+import NutritionistSchedule from './NutritionistSchedule';
+import { availableSlots, slotLabel } from './appointmentSlots';
 
 ChartJS.register(
   CategoryScale,
@@ -67,6 +70,11 @@ function NutritionistDashboard({ profile }) {
   const [calendarMonth, setCalendarMonth] = useState(new Date().toISOString().slice(0, 7));
   const [showAppointmentModal, setShowAppointmentModal] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [proposal, setProposal] = useState(null);
+  const [proposalSlots, setProposalSlots] = useState(null);
+  const [proposalLoading, setProposalLoading] = useState(false);
+  const [proposalError, setProposalError] = useState('');
+  const proposalSlotsRequest = useRef(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all'); // all, active, inactive
   const [dashboardStats, setDashboardStats] = useState(null);
@@ -181,14 +189,43 @@ function NutritionistDashboard({ profile }) {
       await proposeAppointmentChange(appointmentId, {
         new_date: newDate,
         new_time: newTime,
+        new_starts_at: proposal?.starts_at,
         reason: reason
       });
       alert('Cambio de cita propuesto correctamente. El paciente recibirá una notificación.');
+      setProposal(null);
+      setProposalSlots(null);
       loadAppointments();
     } catch (error) {
       console.error('Error proposing change:', error);
-      alert('Error al proponer cambio de cita');
+      setProposalError(error?.response?.status === 409
+        ? 'El horario ya no está disponible. Consulta los horarios otra vez.'
+        : 'No se pudo proponer el cambio.');
     }
+  };
+
+  const loadProposalSlots = async (date) => {
+    const request = ++proposalSlotsRequest.current;
+    setProposalLoading(true);
+    setProposalSlots(null);
+    setProposalError('');
+    try {
+      const response = await api.get('/nutritionist/available-slots', { params: { date } });
+      const available = availableSlots(response.data);
+      if (request === proposalSlotsRequest.current) setProposalSlots(available);
+    } catch (error) {
+      if (request === proposalSlotsRequest.current) setProposalError(error?.response?.data?.code === 'legacy_zone_required'
+          ? 'Resuelve primero las citas antiguas en Configurar agenda.'
+          : 'No se pudieron cargar los horarios disponibles.');
+    } finally {
+      if (request === proposalSlotsRequest.current) setProposalLoading(false);
+    }
+  };
+
+  const openProposal = (appointment) => {
+    setProposal({ appointmentId: appointment.id, date: appointment.appointment_date, starts_at: '', reason: '' });
+    setProposalSlots(null);
+    loadProposalSlots(appointment.appointment_date);
   };
 
   const handleCreateRecommendation = async (e) => {
@@ -564,9 +601,16 @@ Fin del Reporte
         >
           📅 Calendario
         </button>
+        <button
+          className={activeTab === 'schedule' ? 'active' : ''}
+          onClick={() => setActiveTab('schedule')}
+        >
+          Agenda y zona horaria
+        </button>
       </div>
 
       <div className="nutritionist-content">
+        {activeTab === 'schedule' && <NutritionistSchedule />}
         {loading && <div className="loading">Cargando...</div>}
 
         {activeTab === 'patients' && dashboardStats && (
@@ -899,7 +943,7 @@ Fin del Reporte
                       ).map(appointment => (
                         <div key={appointment.id} className={`appointment-card status-${appointment.status}`}>
                           <div className="appointment-time-badge">
-                            {appointment.appointment_time}
+                            {appointment.appointment_time}{appointment.time_zone ? ` · ${appointment.time_zone}` : ' · Zona por confirmar'}
                           </div>
                           <div className="appointment-header">
                             <h3>{appointment.title}</h3>
@@ -917,16 +961,7 @@ Fin del Reporte
                           {appointment.status === 'scheduled' && (
                             <div className="appointment-actions">
                               <button 
-                                onClick={() => {
-                                  const newDate = prompt('Nueva fecha (YYYY-MM-DD):', appointment.appointment_date);
-                                  if (newDate) {
-                                    const newTime = prompt('Nueva hora (HH:MM):', appointment.appointment_time);
-                                    if (newTime) {
-                                      const reason = prompt('Razón del cambio (opcional):');
-                                      handleProposeChange(appointment.id, newDate, newTime, reason || '');
-                                    }
-                                  }
-                                }}
+                                onClick={() => openProposal(appointment)}
                                 className="btn-sm btn-info"
                                 title="Proponer un cambio de fecha/hora al paciente"
                               >
@@ -1275,6 +1310,40 @@ Fin del Reporte
                 </div>
               </div>
             )}
+          </div>
+        )}
+        {proposal && (
+          <div className="modal-overlay" role="presentation" onClick={() => { proposalSlotsRequest.current++; setProposal(null); }}>
+            <div className="appointment-modal" role="dialog" aria-modal="true" aria-labelledby="proposal-title" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3 id="proposal-title">Proponer cambio de cita</h3>
+                <button className="modal-close" onClick={() => { proposalSlotsRequest.current++; setProposal(null); }}>×</button>
+              </div>
+              <div className="modal-body">
+                <label>Fecha nueva <input type="date" value={proposal.date} onChange={e => {
+                  const date = e.target.value;
+                  setProposal(current => ({ ...current, date, starts_at: '' }));
+                  if (date) loadProposalSlots(date);
+                }} /></label>
+                <p>Los horarios se muestran en la zona del profesional.</p>
+                {proposalLoading && <p role="status">Cargando horarios…</p>}
+                {proposalError && <p role="alert">{proposalError}</p>}
+                {proposalSlots?.length === 0 && <p>No hay horarios disponibles en esa fecha.</p>}
+                {proposalSlots?.map(slot => <button key={slot.starts_at} type="button"
+                  className={proposal.starts_at === slot.starts_at ? 'btn-primary' : 'btn-secondary'}
+                  onClick={() => setProposal(current => ({ ...current, starts_at: slot.starts_at, time: slot.start_time }))}>
+                  {slotLabel(slot)}
+                </button>)}
+                <label>Motivo (opcional)<textarea value={proposal.reason} onChange={e => setProposal(current => ({ ...current, reason: e.target.value }))} /></label>
+              </div>
+              <div className="modal-footer">
+                <button className="btn-secondary" onClick={() => setProposal(null)}>Cancelar</button>
+                <button className="btn-primary" disabled={!proposal.starts_at || proposalLoading}
+                  onClick={() => handleProposeChange(proposal.appointmentId, proposal.date, proposal.time, proposal.reason)}>
+                  Enviar propuesta
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

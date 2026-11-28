@@ -32,13 +32,18 @@ func TestClinicalAccessPostgres(t *testing.T) {
 			(5, 'Admin', 'admin@example.test', 'admin', NULL)`,
 		`CREATE TEMP TABLE histories (id INTEGER, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION)`,
 		`INSERT INTO histories VALUES (1, 1, '2026-01-01', 70, 20, 40), (2, 3, '2026-01-01', 80, 20, 40)`,
-		`CREATE TEMP TABLE appointments (id INTEGER PRIMARY KEY, user_id INTEGER, nutritionist_id INTEGER, status TEXT, notes TEXT)`,
-		`INSERT INTO appointments VALUES (10, 1, 2, 'scheduled', ''), (11, 3, 4, 'scheduled', '')`,
+		`CREATE TEMP TABLE appointments (id INTEGER PRIMARY KEY, user_id INTEGER, nutritionist_id INTEGER, status TEXT, notes TEXT, appointment_date TEXT, appointment_time TEXT, starts_at TIMESTAMPTZ)`,
+		`INSERT INTO appointments VALUES (10, 1, 2, 'scheduled', '', '2026-01-30', '09:00', '2026-01-30 09:00+00'), (11, 3, 4, 'scheduled', '', '2026-01-30', '09:00', '2026-01-30 09:00+00')`,
+		`CREATE TEMP TABLE nutritionist_schedule_settings (nutritionist_id INTEGER, time_zone TEXT)`,
+		`INSERT INTO nutritionist_schedule_settings VALUES (2, 'UTC'), (4, 'UTC')`,
+		`CREATE TEMP TABLE nutritionist_schedule_exceptions (nutritionist_id INTEGER, exception_date DATE, intervals JSONB)`,
+		`CREATE TEMP TABLE nutritionist_availability (nutritionist_id INTEGER, day_of_week INTEGER, start_time TEXT, end_time TEXT, is_available BOOLEAN)`,
+		`INSERT INTO nutritionist_availability VALUES (2, 0, '09:00', '10:00', TRUE), (4, 0, '09:00', '10:00', TRUE)`,
 		`CREATE TEMP TABLE recommendations (id SERIAL PRIMARY KEY, nutritionist_id INTEGER, patient_id INTEGER, appointment_id INTEGER, recommendation_text TEXT, diet_changes TEXT, exercise_plan TEXT, next_goals TEXT, created_at TEXT)`,
 		`CREATE TEMP TABLE meal_plans (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT)`,
 		`CREATE TEMP TABLE plan_meals (id SERIAL PRIMARY KEY, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT)`,
 		`CREATE TEMP TABLE notifications (id SERIAL PRIMARY KEY, user_id INTEGER, type TEXT, title TEXT, message TEXT, related_id INTEGER, is_read BOOLEAN DEFAULT FALSE, created_at TEXT)`,
-		`CREATE TEMP TABLE appointment_changes (id SERIAL PRIMARY KEY, appointment_id INTEGER, proposed_by INTEGER, new_date TEXT, new_time TEXT, reason TEXT, status TEXT DEFAULT 'pending', created_at TEXT, responded_at TEXT)`,
+		`CREATE TEMP TABLE appointment_changes (id SERIAL PRIMARY KEY, appointment_id INTEGER, proposed_by INTEGER, new_date TEXT, new_time TEXT, starts_at TIMESTAMPTZ, reason TEXT, status TEXT DEFAULT 'pending', created_at TEXT, responded_at TEXT)`,
 	} {
 		if _, err := testDB.Exec(statement); err != nil {
 			t.Fatal(err)

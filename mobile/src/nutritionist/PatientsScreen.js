@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { View, Text, ScrollView, RefreshControl, TouchableOpacity, ActivityIndicator, TextInput, StyleSheet, Alert, Share } from 'react-native'
 import api from '../api'
 
@@ -13,6 +13,7 @@ export default function PatientsScreen({ onNavigate }) {
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState('info') // info | recommendations
+  const detailsRequest = useRef(0)
 
   const loadPatients = async () => {
     setError('')
@@ -33,7 +34,9 @@ export default function PatientsScreen({ onNavigate }) {
   }
 
   const loadDetails = async (patientId) => {
+    const request = ++detailsRequest.current
     setSelectedId(patientId)
+    setError('')
     setDetails(null)
     setHistory([])
     setRecommendations([])
@@ -43,11 +46,12 @@ export default function PatientsScreen({ onNavigate }) {
         api.get(`/nutritionist/patients/${patientId}/history`),
         api.get(`/nutritionist/recommendations/${patientId}`)
       ])
+      if (request !== detailsRequest.current) return
       setDetails(detailRes.data || null)
       setHistory(Array.isArray(historyRes.data) ? historyRes.data : [])
       setRecommendations(Array.isArray(recRes.data) ? recRes.data : [])
     } catch (e) {
-      setError('No se pudo cargar el paciente seleccionado')
+      if (request === detailsRequest.current) setError('No se pudo cargar el paciente seleccionado')
     }
   }
 
@@ -68,8 +72,8 @@ export default function PatientsScreen({ onNavigate }) {
       const report = `REPORTE DE PACIENTE\n\n` +
         `Nombre: ${details.name || 'N/A'}\n` +
         `Email: ${details.email || 'N/A'}\n` +
-        `Peso actual: ${details.weight || 'N/A'} kg\n` +
-        `Última visita: ${details.last_visit ? new Date(details.last_visit).toLocaleDateString('es-ES') : 'N/A'}\n\n` +
+        `Peso actual: ${details.health_profile?.weight || 'N/A'} kg\n` +
+        `Último registro: ${details.latest_history?.date ? new Date(details.latest_history.date).toLocaleDateString('es-ES') : 'N/A'}\n\n` +
         `HISTORIAL DE PESO:\n` +
         history.slice(0, 10).map(h => 
           `${new Date(h.date).toLocaleDateString('es-ES')}: ${h.weight} kg` +
@@ -87,7 +91,8 @@ export default function PatientsScreen({ onNavigate }) {
         title: `Reporte de ${details.name || 'Paciente'}`
       })
     } catch (e) {
-      console.error('Error sharing report:', e)
+      console.error('[Patients] Could not share report')
+      Alert.alert('Error', 'No se pudo compartir el reporte')
     }
   }
 
@@ -184,11 +189,11 @@ export default function PatientsScreen({ onNavigate }) {
                   <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
                     {activeTab === 'info' && (
                       <View>
-                        {details.last_visit && (
-                          <Text style={styles.detailMeta}>Última visita: {new Date(details.last_visit).toLocaleDateString('es-ES')}</Text>
+                        {details.latest_history?.date && (
+                          <Text style={styles.detailMeta}>Último registro: {new Date(details.latest_history.date).toLocaleDateString('es-ES')}</Text>
                         )}
-                        {details.weight && (
-                          <Text style={styles.detailMeta}>Peso actual: {details.weight} kg</Text>
+                        {details.health_profile?.weight > 0 && (
+                          <Text style={styles.detailMeta}>Peso actual: {details.health_profile.weight} kg</Text>
                         )}
                         <Text style={[styles.detailMeta, { marginTop: 10, fontWeight: '700' }]}>Historial reciente</Text>
                         {history.length === 0 ? (

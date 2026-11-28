@@ -13,6 +13,47 @@ import { useTranslation } from 'react-i18next';
 import api from './api';
 
 export default function DashboardScreen({ onNavigate, profile }) {
+  if (profile?.role === 'nutritionist') {
+    return <ProfessionalDashboard onNavigate={onNavigate} profile={profile} />;
+  }
+  return <PatientDashboard onNavigate={onNavigate} profile={profile} />;
+}
+
+function ProfessionalDashboard({ onNavigate, profile }) {
+  const { t } = useTranslation();
+  const sections = [
+    ['professionalPatients', 'nutri-patients'],
+    ['professionalAppointments', 'nutri-calendar'],
+    ['professionalRecommendations', 'nutri-recommendations'],
+    ['professionalMealPlans', 'nutri-meal-plans'],
+    ['recipes', 'nutri-recipes'],
+  ];
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.header}>
+          <Text style={styles.greeting}>{t('professionalDashboard')}</Text>
+          <Text style={styles.date}>{profile?.name}</Text>
+        </View>
+        <View style={styles.card}>
+          {sections.map(([label, target]) => (
+            <TouchableOpacity
+              key={target}
+              accessibilityRole="button"
+              style={styles.outlineButton}
+              onPress={() => onNavigate(target)}
+            >
+              <Text style={styles.shortcutText}>{t(label)}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function PatientDashboard({ onNavigate, profile }) {
   const { t } = useTranslation();
   const [mealPlan, setMealPlan] = useState(null);
   const [foodLog, setFoodLog] = useState([]);
@@ -24,46 +65,31 @@ export default function DashboardScreen({ onNavigate, profile }) {
   ]);
   const [appointments, setAppointments] = useState([]);
 
-  console.log('[Dashboard] Component mounted, profile:', profile);
-
   useEffect(() => {
-    console.log('[Dashboard] useEffect triggered, calling loadTodayData');
     loadTodayData();
   }, []);
 
   const loadTodayData = async () => {
     try {
-      console.log('[Dashboard] loadTodayData started');
       const today = new Date().toISOString().split('T')[0];
-      console.log('[Dashboard] Today date:', today);
-      
-      console.log('[Dashboard] Making API call to /meal-plan');
       const mealRes = await api.get('/meal-plan');
-      console.log('[Dashboard] API response received:', mealRes.data);
-      
-      console.log('[Dashboard] Making API call to /food-log?date=' + today);
       const foodRes = await api.get(`/food-log?date=${today}`);
-      console.log('[Dashboard] Food log response received:', foodRes.data);
       
       // Backend returns {plan: {...}, meals: [...]}
       // Extract just the meals array
       const mealsData = Array.isArray(mealRes.data?.meals) ? mealRes.data.meals : [];
-      console.log('[Dashboard] Extracted meals:', mealsData.length, 'meals');
-      console.log('[Dashboard] Setting mealPlan with', mealsData.length, 'meals');
       setMealPlan(mealsData);
       setFoodLog(foodRes.data || []);
       try {
         const appointmentRes = await api.get('/appointments');
         setAppointments(Array.isArray(appointmentRes.data) ? appointmentRes.data.slice(0, 3) : []);
       } catch (appointmentError) {
-        console.warn('[Dashboard] Could not load appointments:', appointmentError?.message);
+        console.warn('[Dashboard] Could not load appointments');
       }
     } catch (err) {
-      console.error('[Dashboard] Error in loadTodayData:', err);
-      console.error('[Dashboard] Error details:', err.message);
+      console.error('[Dashboard] Could not load today data');
       setMealPlan([]);
     } finally {
-      console.log('[Dashboard] loadTodayData finished, setting loading to false');
       setLoading(false);
     }
   };
@@ -90,7 +116,7 @@ export default function DashboardScreen({ onNavigate, profile }) {
       const foodRes = await api.get(`/food-log?date=${today}`);
       setFoodLog(foodRes.data || []);
     } catch (error) {
-      console.error('Error toggling meal:', error);
+      console.error('[Dashboard] Could not update meal completion');
     }
   };
 
@@ -101,7 +127,6 @@ export default function DashboardScreen({ onNavigate, profile }) {
 
   const getTodayMeals = () => {
     if (!mealPlan || !Array.isArray(mealPlan) || mealPlan.length === 0) {
-      console.log('[Dashboard] No meal plan or meals:', { mealPlan });
       return null;
     }
 
@@ -109,11 +134,7 @@ export default function DashboardScreen({ onNavigate, profile }) {
     const daysOfWeek = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const todayName = daysOfWeek[today];
     
-    console.log('[Dashboard] Today is:', todayName, '- Day index:', today);
-    console.log('[Dashboard] Total meals in plan:', mealPlan.length);
-
     const todayMealsList = mealPlan.filter(meal => meal.day_of_week === todayName);
-    console.log('[Dashboard] Meals for today:', todayMealsList);
 
     if (todayMealsList.length === 0) return null;
 

@@ -1,5 +1,10 @@
 # Recordatorios persistentes: primera versión Android
 
+> Para el estado actual y el siguiente trabajo, consultar
+> `../TAREAS_PENDIENTES.md`. Los recordatorios locales de Android todavía no
+> están conectados automáticamente a las citas; el cambio local del recordatorio
+> del backend requiere pruebas integrales antes de desplegar.
+
 ## Estado de continuidad — 2026-11-22
 
 Este trabajo está en la PR borrador

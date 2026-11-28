@@ -61,6 +61,12 @@ func beginAppointmentAccess(c *gin.Context, appointmentID string) (*sql.Tx, int,
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify clinical access"})
 		return nil, 0, false
 	}
+	if err := lockProfessionalSchedule(c.Request.Context(), tx, claims.UserID); err != nil {
+		_ = tx.Rollback()
+		log.Printf("[ClinicalAccess] Failed to lock professional schedule: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify clinical access"})
+		return nil, 0, false
+	}
 	var patientID int
 	err = tx.QueryRowContext(c.Request.Context(), rebindQuery(`
 		SELECT a.user_id FROM appointments a

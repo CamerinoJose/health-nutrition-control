@@ -1,5 +1,5 @@
 ﻿import React from 'react'
-import { render, fireEvent, waitFor } from '@testing-library/react-native'
+import { act, render, fireEvent, waitFor } from '@testing-library/react-native'
 import { Share } from 'react-native'
 import PatientsScreen from '../PatientsScreen'
 import api from '../../api'
@@ -42,8 +42,8 @@ describe('NutritionistPatientsScreen', () => {
     id: 1,
     name: 'Juan Pérez',
     email: 'juan@test.com',
-    last_visit: '2026-01-10T10:00:00Z',
-    weight: 80
+    latest_history: { date: '2026-01-10T10:00:00Z' },
+    health_profile: { weight: 80 }
   }
 
   const mockHistory = [
@@ -121,10 +121,29 @@ describe('NutritionistPatientsScreen', () => {
 
     await waitFor(() => {
       expect(getAllByText('Juan Pérez').length).toBeGreaterThan(0)
-      expect(getByText(/Última visita:/)).toBeTruthy()
+      expect(getByText(/Último registro:/)).toBeTruthy()
       expect(getByText(/Peso actual:/)).toBeTruthy()
       expect(getByText('Historial reciente')).toBeTruthy()
     })
+  })
+
+  it('does not show an earlier patient response after selecting another patient', async () => {
+    let resolveFirst
+    api.get.mockImplementation((url) => {
+      if (url === '/nutritionist/patients') return Promise.resolve({ data: mockPatients })
+      if (url === '/nutritionist/patients/1') return new Promise(resolve => { resolveFirst = resolve })
+      if (url === '/nutritionist/patients/2') {
+        return Promise.resolve({ data: { id: 2, name: 'María García', health_profile: { weight: 65 } } })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const ui = render(<PatientsScreen onNavigate={mockNavigate} />)
+    await waitFor(() => expect(ui.getByText('María García')).toBeTruthy())
+    fireEvent.press(ui.getByText('María García'))
+    await waitFor(() => expect(ui.getByText('Peso actual: 65 kg')).toBeTruthy())
+    await act(async () => { resolveFirst({ data: mockPatientDetails }) })
+    expect(ui.getByText('Peso actual: 65 kg')).toBeTruthy()
+    expect(ui.queryByText('Peso actual: 80 kg')).toBeNull()
   })
 
   it('switches to the recommendations tab and renders recommendation text', async () => {

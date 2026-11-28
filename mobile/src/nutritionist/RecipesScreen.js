@@ -40,7 +40,7 @@ export default function NutritionistRecipesScreen({ onNavigate }) {
       setRecipes(Array.isArray(res.data) ? res.data : [])
     } catch (e) {
       setError('Error al cargar recetas')
-      console.error(e)
+      console.error('[Recipes] Could not load recipes')
     } finally {
       setLoading(false)
     }
@@ -120,7 +120,7 @@ export default function NutritionistRecipesScreen({ onNavigate }) {
       setShowModal(false)
       loadRecipes()
     } catch (e) {
-      console.error(e)
+      console.error('[Recipes] Could not save recipe')
       Alert.alert('Error', 'No se pudo guardar la receta')
     }
   }
@@ -140,7 +140,7 @@ export default function NutritionistRecipesScreen({ onNavigate }) {
               Alert.alert('Éxito', 'Receta eliminada')
               loadRecipes()
             } catch (e) {
-              console.error(e)
+              console.error('[Recipes] Could not delete recipe')
               Alert.alert('Error', 'No se pudo eliminar')
             }
           }

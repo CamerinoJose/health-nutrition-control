@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { 
   View, Text, ScrollView, TouchableOpacity, TextInput, 
   ActivityIndicator, StyleSheet, Alert, RefreshControl, Modal 
@@ -22,6 +22,7 @@ export default function RecommendationsScreen({ onNavigate }) {
     next_goals: ''
   })
   const [error, setError] = useState('')
+  const patientRequest = useRef(0)
 
   useEffect(() => {
     loadPatients()
@@ -39,22 +40,25 @@ export default function RecommendationsScreen({ onNavigate }) {
       }
     } catch (e) {
       setError('Error al cargar pacientes')
-      console.error(e)
+      console.error('[Recommendations] Could not load patients')
     } finally {
       setLoading(false)
     }
   }
 
   const selectPatient = async (patient) => {
+    const request = ++patientRequest.current
     setSelectedPatient(patient)
     setRecommendations([])
     setAppointments([])
+    setError('')
     
     try {
       const [recRes, apptRes] = await Promise.all([
         api.get(`/nutritionist/recommendations/${patient.id}`),
         api.get('/nutritionist/appointments')
       ])
+      if (request !== patientRequest.current) return
       
       setRecommendations(Array.isArray(recRes.data) ? recRes.data : [])
       
@@ -62,7 +66,9 @@ export default function RecommendationsScreen({ onNavigate }) {
       const patientAppts = allAppts.filter(a => a.user_id === patient.id)
       setAppointments(patientAppts)
     } catch (e) {
-      console.error('Error loading recommendations:', e)
+      if (request !== patientRequest.current) return
+      setError('No se pudieron cargar las recomendaciones')
+      console.error('[Recommendations] Could not load recommendations')
     }
   }
 
@@ -117,7 +123,7 @@ export default function RecommendationsScreen({ onNavigate }) {
         selectPatient(selectedPatient)
       }
     } catch (e) {
-      console.error(e)
+      console.error('[Recommendations] Could not create recommendation')
       Alert.alert('Error', 'No se pudo crear la recomendación')
     }
   }

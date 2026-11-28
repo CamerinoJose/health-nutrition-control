@@ -18,6 +18,29 @@ Maestro y un modo de pruebas dentro de móvil/web. Cualquier conversación futur
 debe comenzar por `TAREAS_PENDIENTES.md`, revisar el estado de CI y seguir el
 orden maestro sin marcar tareas como completadas por implementaciones propuestas.
 
+## Agenda en desarrollo local — 2026-11-27
+
+La implementación de agenda aún no está publicada ni terminada. El backend
+local añade configuración semanal y excepciones por profesional, zona horaria
+y el instante `starts_at` para distinguir horas repetidas. La disponibilidad
+de 30 minutos se comprueba bajo bloqueo transaccional por profesional.
+Archivar no libera el intervalo; cancelar sí. Al cambiar de zona se conserva
+el instante y se convierte la hora mostrada.
+
+La web y Android seleccionan horarios usando el instante y el desplazamiento
+UTC entregados por la API; ambos tienen configuración profesional de agenda,
+selección de citas y propuestas de cambio. La interfaz de continuidad permite
+previsualizar las horas antiguas, elegir ocurrencias repetidas y confirmar
+instantes corregidos. Aún falta la validación integral en un entorno aislado y
+resolver por un flujo autorizado las citas antiguas sin profesional asignado.
+Revisar reasignaciones, rutas antiguas y recordatorios antes de desplegar.
+El estado y la lista ordenada de pendientes están en `TAREAS_PENDIENTES.md`.
+
+Las secciones del esquema original más abajo son históricas: sus etiquetas de
+«completo», referencias a SQLite y pendientes de Gemini no son el estado
+vigente. Para decisiones actuales prevalecen las secciones anteriores y
+`TAREAS_PENDIENTES.md`.
+
 ## Revisión automática
 
 GitHub Actions ejecuta `go vet`, las pruebas y la compilación del backend,

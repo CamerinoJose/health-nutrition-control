@@ -64,6 +64,7 @@ CREATE TABLE appointments (
     description TEXT,
     appointment_date TEXT,
     appointment_time TEXT,
+    starts_at TIMESTAMPTZ,
     status TEXT DEFAULT 'scheduled',
     notes TEXT,
     is_archived BOOLEAN DEFAULT FALSE,
@@ -137,6 +138,7 @@ CREATE TABLE appointment_changes (
     proposed_by INTEGER REFERENCES users(id),
     new_date TEXT NOT NULL,
     new_time TEXT NOT NULL,
+    starts_at TIMESTAMPTZ,
     reason TEXT,
     status TEXT DEFAULT 'pending',
     created_at TEXT,
@@ -161,6 +163,18 @@ CREATE TABLE nutritionist_availability (
     start_time TEXT NOT NULL,
     end_time TEXT NOT NULL,
     is_available BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE nutritionist_schedule_settings (
+    nutritionist_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    time_zone TEXT NOT NULL
+);
+
+CREATE TABLE nutritionist_schedule_exceptions (
+    nutritionist_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exception_date DATE NOT NULL,
+    intervals JSONB NOT NULL,
+    PRIMARY KEY (nutritionist_id, exception_date)
 );
 
 CREATE TABLE recommendations (

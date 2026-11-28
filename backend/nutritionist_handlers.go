@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -338,10 +339,16 @@ func createRecommendationHandler(c *gin.Context) {
 	// Handle optional appointment_id
 	var appointmentID interface{}
 	if req.AppointmentID != nil && *req.AppointmentID > 0 {
+		if err := lockProfessionalSchedule(c.Request.Context(), tx, claims.UserID); err != nil {
+			log.Printf("[Appointments] Failed to lock professional schedule: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify appointment"})
+			return
+		}
 		var found int
+		var status sql.NullString
 		err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`
-			SELECT id FROM appointments WHERE id = ? AND user_id = ? AND nutritionist_id = ? FOR UPDATE
-		`), *req.AppointmentID, req.PatientID, claims.UserID).Scan(&found)
+			SELECT id, status FROM appointments WHERE id = ? AND user_id = ? AND nutritionist_id = ? FOR UPDATE
+		`), *req.AppointmentID, req.PatientID, claims.UserID).Scan(&found, &status)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				c.JSON(http.StatusNotFound, gin.H{"error": "appointment not found"})
@@ -349,6 +356,30 @@ func createRecommendationHandler(c *gin.Context) {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify appointment"})
 			}
 			return
+		}
+		if status.String == "cancelled" {
+			var date, clock string
+			var startsAt sql.NullTime
+			if err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`
+				SELECT appointment_date, appointment_time, starts_at FROM appointments WHERE id = ?
+			`), found).Scan(&date, &clock, &startsAt); err != nil {
+				log.Printf("[Appointments] Failed to load appointment time: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify appointment"})
+				return
+			}
+			instantText := ""
+			if startsAt.Valid {
+				instantText = startsAt.Time.Format(time.RFC3339)
+			}
+			_, available, err := lockAndCheckAppointmentSlot(c.Request.Context(), tx, claims.UserID, date, clock, instantText, found)
+			if err != nil {
+				respondSlotError(c, err)
+				return
+			}
+			if !available {
+				c.JSON(http.StatusConflict, gin.H{"error": "appointment time is unavailable"})
+				return
+			}
 		}
 		appointmentID = *req.AppointmentID
 	} else {
@@ -458,10 +489,12 @@ func getNutritionistAppointmentsHandler(c *gin.Context) {
 
 	rows, err := queryDB(`
 		SELECT a.id, a.user_id, u.name as patient_name, a.title, a.description, 
-			a.appointment_date, a.appointment_time, a.status, a.notes, a.created_at
+			a.appointment_date, a.appointment_time, a.status, a.notes, a.created_at,
+			a.starts_at, COALESCE(s.time_zone, '')
 		FROM appointments a
 		JOIN users u ON u.id = a.user_id
 		JOIN users n ON n.id = u.nutritionist_id
+		LEFT JOIN nutritionist_schedule_settings s ON s.nutritionist_id = a.nutritionist_id
 		WHERE a.nutritionist_id = ? AND u.role = 'user' AND n.id = ? AND n.role = 'nutritionist'
 		ORDER BY a.appointment_date ASC, a.appointment_time ASC
 	`, claims.UserID, claims.UserID)
@@ -476,14 +509,19 @@ func getNutritionistAppointmentsHandler(c *gin.Context) {
 	appointments := []map[string]interface{}{}
 	for rows.Next() {
 		var id, userID int
-		var patientName, title, description, appointmentDate, appointmentTime, status, notes, createdAt string
+		var patientName, title, description, appointmentDate, appointmentTime, status, notes, createdAt, timeZone string
+		var startsAt sql.NullTime
 
-		if err := rows.Scan(&id, &userID, &patientName, &title, &description, &appointmentDate, &appointmentTime, &status, &notes, &createdAt); err != nil {
+		if err := rows.Scan(&id, &userID, &patientName, &title, &description, &appointmentDate, &appointmentTime, &status, &notes, &createdAt, &startsAt, &timeZone); err != nil {
 			log.Printf("[Nutritionist] Error scanning appointment: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch appointments"})
 			return
 		}
 
+		var instant interface{}
+		if startsAt.Valid {
+			instant = startsAt.Time.UTC().Format(time.RFC3339)
+		}
 		appointments = append(appointments, map[string]interface{}{
 			"id":               id,
 			"user_id":          userID,
@@ -492,6 +530,8 @@ func getNutritionistAppointmentsHandler(c *gin.Context) {
 			"description":      description,
 			"appointment_date": appointmentDate,
 			"appointment_time": appointmentTime,
+			"starts_at":        instant,
+			"time_zone":        timeZone,
 			"status":           status,
 			"notes":            notes,
 			"created_at":       createdAt,
@@ -524,6 +564,51 @@ func updateAppointmentNotesHandler(c *gin.Context) {
 		return
 	}
 	defer tx.Rollback()
+	var existingStatus sql.NullString
+	var nutritionistID int
+	if err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`
+		SELECT status, nutritionist_id FROM appointments WHERE id = ?
+	`), appointmentID).Scan(&existingStatus, &nutritionistID); err != nil {
+		log.Printf("[Appointments] Failed to load status: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update appointment"})
+		return
+	}
+	if req.Status == "" {
+		req.Status = existingStatus.String
+	}
+	if req.Status != "scheduled" && req.Status != "pending" && req.Status != "completed" && req.Status != "cancelled" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid appointment status"})
+		return
+	}
+	if existingStatus.String == "cancelled" && req.Status != "cancelled" {
+		var date, clock string
+		var startsAt sql.NullTime
+		if err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`
+			SELECT appointment_date, appointment_time, starts_at FROM appointments WHERE id = ?
+		`), appointmentID).Scan(&date, &clock, &startsAt); err != nil {
+			log.Printf("[Appointments] Failed to load appointment time: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update appointment"})
+			return
+		}
+		id, err := strconv.Atoi(appointmentID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "appointment not found"})
+			return
+		}
+		instantText := ""
+		if startsAt.Valid {
+			instantText = startsAt.Time.Format(time.RFC3339)
+		}
+		_, available, err := lockAndCheckAppointmentSlot(c.Request.Context(), tx, nutritionistID, date, clock, instantText, id)
+		if err != nil {
+			respondSlotError(c, err)
+			return
+		}
+		if !available {
+			c.JSON(http.StatusConflict, gin.H{"error": "appointment time is unavailable"})
+			return
+		}
+	}
 	_, err := tx.ExecContext(c.Request.Context(), rebindQuery(`
 		UPDATE appointments 
 		SET notes = ?, status = ?
@@ -548,14 +633,26 @@ func proposeAppointmentChangeHandler(c *gin.Context) {
 	appointmentID := c.Param("id")
 
 	var req struct {
-		NewDate string `json:"new_date" binding:"required"`
-		NewTime string `json:"new_time" binding:"required"`
-		Reason  string `json:"reason"`
+		NewDate     string `json:"new_date" binding:"required"`
+		NewTime     string `json:"new_time" binding:"required"`
+		NewStartsAt string `json:"new_starts_at"`
+		Reason      string `json:"reason"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if _, err := appointmentInstants(req.NewDate, req.NewTime, time.UTC); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid appointment date or time"})
+		return
+	}
+	if req.NewStartsAt != "" {
+		if _, err := time.Parse(time.RFC3339, req.NewStartsAt); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid appointment instant"})
+			return
+		}
 	}
 
 	tx, userID, allowed := beginAppointmentAccess(c, appointmentID)
@@ -564,12 +661,27 @@ func proposeAppointmentChangeHandler(c *gin.Context) {
 	}
 	defer tx.Rollback()
 
+	id, err := strconv.Atoi(appointmentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "appointment not found"})
+		return
+	}
+	instant, available, err := lockAndCheckAppointmentSlot(c.Request.Context(), tx, claims.UserID, req.NewDate, req.NewTime, req.NewStartsAt, id)
+	if err != nil {
+		respondSlotError(c, err)
+		return
+	}
+	if !available {
+		c.JSON(http.StatusConflict, gin.H{"error": "appointment time is unavailable"})
+		return
+	}
+
 	// Create change proposal
 	var changeID int
-	err := tx.QueryRowContext(c.Request.Context(), rebindQuery(`
-		INSERT INTO appointment_changes (appointment_id, proposed_by, new_date, new_time, reason, created_at)
-		VALUES (?, ?, ?, ?, ?, ?) RETURNING id
-	`), appointmentID, claims.UserID, req.NewDate, req.NewTime, req.Reason, time.Now().Format("2006-01-02 15:04:05")).Scan(&changeID)
+	err = tx.QueryRowContext(c.Request.Context(), rebindQuery(`
+		INSERT INTO appointment_changes (appointment_id, proposed_by, new_date, new_time, starts_at, reason, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`), appointmentID, claims.UserID, req.NewDate, req.NewTime, instant, req.Reason, time.Now().Format("2006-01-02 15:04:05")).Scan(&changeID)
 	if err != nil {
 		log.Printf("[Nutritionist] Error creating appointment change: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to propose change"})
@@ -637,9 +749,13 @@ func getNutritionistAvailabilityHandler(c *gin.Context) {
 // setNutritionistAvailabilityHandler sets availability slots for the nutritionist
 func setNutritionistAvailabilityHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
+	if claims.Role != "nutritionist" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "professional account required"})
+		return
+	}
 
 	var req struct {
-		DayOfWeek   int    `json:"day_of_week" binding:"required"`
+		DayOfWeek   *int   `json:"day_of_week" binding:"required"`
 		StartTime   string `json:"start_time" binding:"required"`
 		EndTime     string `json:"end_time" binding:"required"`
 		IsAvailable bool   `json:"is_available"`
@@ -650,10 +766,59 @@ func setNutritionistAvailabilityHandler(c *gin.Context) {
 		return
 	}
 
-	_, err := execDB(`
+	if *req.DayOfWeek < 0 || *req.DayOfWeek > 6 || validateScheduleIntervals([]scheduleInterval{{req.StartTime, req.EndTime}}) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid availability"})
+		return
+	}
+	tx, err := db.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		log.Printf("[Nutritionist] Error starting availability update: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set availability"})
+		return
+	}
+	defer tx.Rollback()
+	if err := lockProfessionalSchedule(c.Request.Context(), tx, claims.UserID); err != nil {
+		log.Printf("[Nutritionist] Error locking availability: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set availability"})
+		return
+	}
+	if req.IsAvailable {
+		rows, err := tx.QueryContext(c.Request.Context(), rebindQuery(`
+			SELECT start_time, end_time FROM nutritionist_availability
+			WHERE nutritionist_id = ? AND day_of_week = ? AND is_available = TRUE
+		`), claims.UserID, *req.DayOfWeek)
+		if err != nil {
+			log.Printf("[Nutritionist] Error checking availability: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set availability"})
+			return
+		}
+		intervals := []scheduleInterval{{req.StartTime, req.EndTime}}
+		for rows.Next() {
+			var interval scheduleInterval
+			if err := rows.Scan(&interval.StartTime, &interval.EndTime); err != nil {
+				rows.Close()
+				log.Printf("[Nutritionist] Error reading availability: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set availability"})
+				return
+			}
+			intervals = append(intervals, interval)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			log.Printf("[Nutritionist] Error reading availability: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set availability"})
+			return
+		}
+		rows.Close()
+		if err := validateScheduleIntervals(intervals); err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "availability overlaps existing hours"})
+			return
+		}
+	}
+	_, err = tx.ExecContext(c.Request.Context(), rebindQuery(`
 		INSERT INTO nutritionist_availability (nutritionist_id, day_of_week, start_time, end_time, is_available)
 		VALUES (?, ?, ?, ?, ?)
-	`, claims.UserID, req.DayOfWeek, req.StartTime, req.EndTime, req.IsAvailable)
+	`), claims.UserID, *req.DayOfWeek, req.StartTime, req.EndTime, req.IsAvailable)
 
 	if err != nil {
 		log.Printf("[Nutritionist] Error setting availability: %v", err)
@@ -661,6 +826,11 @@ func setNutritionistAvailabilityHandler(c *gin.Context) {
 		return
 	}
 
+	if err := tx.Commit(); err != nil {
+		log.Printf("[Nutritionist] Error committing availability: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set availability"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "availability set successfully"})
 }
 
@@ -676,50 +846,16 @@ func getAvailableSlotsHandler(c *gin.Context) {
 
 	// Parse date to get day of week
 	date, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
+	if err != nil || date.Format("2006-01-02") != dateStr {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid date format"})
 		return
 	}
 
-	dayOfWeek := int(date.Weekday())
-
-	// Get availability for that day
-	rows, err := queryDB(`
-		SELECT start_time, end_time
-		FROM nutritionist_availability
-		WHERE nutritionist_id = ? AND day_of_week = ? AND is_available = TRUE
-	`, claims.UserID, dayOfWeek)
-
+	slots, err := availableAppointmentSlots(c.Request.Context(), db, claims.UserID, dateStr, 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch slots"})
+		respondSlotError(c, err)
 		return
 	}
-	defer rows.Close()
-
-	slots := []map[string]interface{}{}
-	for rows.Next() {
-		var startTime, endTime string
-		if err := rows.Scan(&startTime, &endTime); err != nil {
-			continue
-		}
-
-		// Get existing appointments for this time slot
-		var count int
-		queryRowDB(`
-			SELECT COUNT(*) FROM appointments 
-			WHERE appointment_date = ? 
-			AND appointment_time >= ? 
-			AND appointment_time < ?
-			AND status != 'cancelled'
-		`, dateStr, startTime, endTime).Scan(&count)
-
-		slots = append(slots, map[string]interface{}{
-			"start_time": startTime,
-			"end_time":   endTime,
-			"available":  count == 0,
-		})
-	}
-
 	c.JSON(http.StatusOK, slots)
 }
 

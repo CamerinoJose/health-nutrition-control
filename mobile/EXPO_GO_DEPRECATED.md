@@ -1,5 +1,9 @@
 # Expo Go Deprecated for This Project
 
+> Nota de continuidad: para el estado actual y el APK disponible, consulta
+> `../TAREAS_PENDIENTES.md`. Usa una compilación de desarrollo para validar
+> las funciones nativas y notificaciones en un dispositivo real.
+
 ## Why?
 Expo Go no longer supports push notifications and many advanced features required by this app (as of SDK 53+). You must use a development build for all testing and development.
 

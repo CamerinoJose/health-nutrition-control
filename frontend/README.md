@@ -2,6 +2,10 @@
 
 Proyecto React con soporte i18n (es / en) y placeholders de imagen.
 
+La agenda con selección de zona y horario profesional está en desarrollo local,
+no publicada. La configuración profesional en web y la prueba integral siguen
+pendientes. Consulta `../TAREAS_PENDIENTES.md` y `../TESTING_AUTOMATION.md`.
+
 Instalación y ejecución:
 
 ```bash

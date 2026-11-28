@@ -21,21 +21,21 @@ describe('NutritionistMealPlansScreen', () => {
     snacks: 'Frutas, nueces, yogurt bajo en grasa',
     meals: [
       {
-        day_of_week: 0, // Lunes
+        day_of_week: 'Lunes',
         meal_type: 'Desayuno',
         name: 'Avena con frutas',
         ingredients: 'Avena, fresas, plátano',
         preparation: 'Cocinar avena, agregar frutas'
       },
       {
-        day_of_week: 0,
+        day_of_week: 'Lunes',
         meal_type: 'Almuerzo',
         name: 'Pollo con verduras',
         ingredients: 'Pollo, brócoli, zanahoria',
         preparation: 'Asar pollo, cocinar verduras al vapor'
       },
       {
-        day_of_week: 1, // Martes
+        day_of_week: 'Martes',
         meal_type: 'Desayuno',
         name: 'Huevos revueltos',
         ingredients: 'Huevos, espinaca',
@@ -97,7 +97,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should auto-select first patient on load', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -109,7 +109,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should load meal plan when patient is selected', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -127,7 +127,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should display empty state when patient has no plan', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -140,7 +140,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should display plan details when available', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockMealPlan })
+        .mockResolvedValueOnce({ data: { plan: mockMealPlan, meals: mockMealPlan.meals } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -153,7 +153,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should display snacks section when available', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockMealPlan })
+        .mockResolvedValueOnce({ data: { plan: mockMealPlan, meals: mockMealPlan.meals } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -166,7 +166,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should display meals grouped by day', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockMealPlan })
+        .mockResolvedValueOnce({ data: { plan: mockMealPlan, meals: mockMealPlan.meals } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -182,7 +182,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should display meal types and ingredients', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockMealPlan })
+        .mockResolvedValueOnce({ data: { plan: mockMealPlan, meals: mockMealPlan.meals } })
       
       const { getByText, getAllByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -198,7 +198,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should open create modal when + Crear is pressed', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -216,7 +216,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should show patient name in modal', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText, getAllByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -235,7 +235,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should have all basic form fields', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText, getByPlaceholderText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -256,7 +256,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should display all 7 days of the week', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -280,7 +280,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should display all 5 meal types per day', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getAllByText, getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -310,7 +310,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should show error when trying to save without plan name', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -331,7 +331,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should show warning when trying to save without meals', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText, getByPlaceholderText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -353,7 +353,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should create plan successfully with valid data', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       api.post.mockResolvedValue({ data: { id: 1 } })
       
       const { getByText, getByPlaceholderText, getAllByPlaceholderText } = render(
@@ -400,7 +400,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should include snacks in the plan', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       api.post.mockResolvedValue({ data: { id: 1 } })
       
       const { getByText, getByPlaceholderText, getAllByPlaceholderText } = render(
@@ -438,7 +438,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should set correct day_of_week for each day', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       api.post.mockResolvedValue({ data: { id: 1 } })
       
       const { getByText, getByPlaceholderText, getAllByPlaceholderText } = render(
@@ -455,31 +455,37 @@ describe('NutritionistMealPlansScreen', () => {
         fireEvent.changeText(getByPlaceholderText('Ej: Plan Enero 2026'), 'Test Plan')
         
         const mealInputs = getAllByPlaceholderText('Nombre del platillo')
-        // Add meals for different days to test day_of_week
-        if (mealInputs.length >= 2) {
-          fireEvent.changeText(mealInputs[0], 'Lunes Meal') // Should be day 0
-          fireEvent.changeText(mealInputs[5], 'Martes Meal') // Should be day 1 (5 meals per day)
-        }
+        fireEvent.changeText(mealInputs[0], 'Lunes Meal')
+        fireEvent.changeText(mealInputs[5], 'Martes Meal')
       })
       
       fireEvent.press(getByText('Crear'))
       
       await waitFor(() => {
-        const postCall = api.post.mock.calls[0]
-        if (postCall) {
-          const payload = postCall[1]
-          expect(payload.meals).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({ day_of_week: 0 }),
-              expect.objectContaining({ day_of_week: 1 })
-            ])
-          )
-        }
+        expect(api.post).toHaveBeenCalled()
+        const payload = api.post.mock.calls[0][1]
+        expect(payload.meals).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ day_of_week: 'Lunes' }),
+            expect.objectContaining({ day_of_week: 'Martes' })
+          ])
+        )
       })
     })
   })
 
   describe('Error Handling', () => {
+    it('does not present a failed plan request as an absent plan', async () => {
+      api.get
+        .mockResolvedValueOnce({ data: mockPatients })
+        .mockRejectedValueOnce(new Error('Network error'))
+
+      const { getByText, queryByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
+
+      await waitFor(() => expect(getByText('No se pudo cargar el plan de comidas')).toBeTruthy())
+      expect(queryByText(/no tiene un plan activo/)).toBeNull()
+    })
+
     it('should display error banner when patients fail to load', async () => {
       api.get.mockRejectedValue(new Error('Network error'))
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
@@ -489,10 +495,10 @@ describe('NutritionistMealPlansScreen', () => {
       })
     })
 
-    it('should handle null plan data gracefully', async () => {
+    it('should handle a missing plan gracefully', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { queryByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -505,7 +511,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should show error alert when creation fails', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       api.post.mockRejectedValue(new Error('API Error'))
       
       const { getByText, getByPlaceholderText, getAllByPlaceholderText } = render(
@@ -551,7 +557,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should reload data on pull to refresh', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { UNSAFE_getAllByType } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -577,7 +583,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should set current date as default start date', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: null })
+        .mockRejectedValueOnce({ response: { status: 404, data: { error: 'no meal plan found' } } })
       
       const { getByText, getByDisplayValue } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -596,7 +602,7 @@ describe('NutritionistMealPlansScreen', () => {
     it('should format plan start date correctly in display', async () => {
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: mockMealPlan })
+        .mockResolvedValueOnce({ data: { plan: mockMealPlan, meals: mockMealPlan.meals } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       
@@ -612,17 +618,17 @@ describe('NutritionistMealPlansScreen', () => {
       const fullPlan = {
         ...mockMealPlan,
         meals: [
-          { day_of_week: 0, meal_type: 'Desayuno', name: 'Test 1', ingredients: 'ing1' },
-          { day_of_week: 0, meal_type: 'Colación AM', name: 'Test 2', ingredients: 'ing2' },
-          { day_of_week: 0, meal_type: 'Almuerzo', name: 'Test 3', ingredients: 'ing3' },
-          { day_of_week: 0, meal_type: 'Colación PM', name: 'Test 4', ingredients: 'ing4' },
-          { day_of_week: 0, meal_type: 'Cena', name: 'Test 5', ingredients: 'ing5' }
+          { day_of_week: 'Lunes', meal_type: 'Desayuno', name: 'Test 1', ingredients: 'ing1' },
+          { day_of_week: 'Lunes', meal_type: 'Colación AM', name: 'Test 2', ingredients: 'ing2' },
+          { day_of_week: 'Lunes', meal_type: 'Almuerzo', name: 'Test 3', ingredients: 'ing3' },
+          { day_of_week: 'Lunes', meal_type: 'Colación PM', name: 'Test 4', ingredients: 'ing4' },
+          { day_of_week: 'Lunes', meal_type: 'Cena', name: 'Test 5', ingredients: 'ing5' }
         ]
       }
       
       api.get
         .mockResolvedValueOnce({ data: mockPatients })
-        .mockResolvedValueOnce({ data: fullPlan })
+        .mockResolvedValueOnce({ data: { plan: fullPlan, meals: fullPlan.meals } })
       
       const { getByText } = render(<MealPlansScreen onNavigate={mockNavigate} />)
       

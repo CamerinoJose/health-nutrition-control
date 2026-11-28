@@ -1,8 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import api from './api';
 import { getAppointmentChanges, acceptAppointmentChange, rejectAppointmentChange, getAvailableSlots } from './api';
+import { availableSlots, localDateInput, localMonthInput, slotErrorMessage, slotLabel } from './appointmentSlots';
 import './appointments.css';
+
+const aptTimestamp = appointment => {
+  const parsed = appointment.starts_at
+    ? Date.parse(appointment.starts_at)
+    : Date.parse(`${appointment.appointment_date}T${appointment.appointment_time || '00:00'}:00`);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 const Appointments = () => {
   const { t } = useTranslation();
@@ -14,20 +22,49 @@ const Appointments = () => {
   const [selectedDate, setSelectedDate] = useState(null);
   const [editingAppointment, setEditingAppointment] = useState(null);
   // Quick scheduler state
-  const [quickDate, setQuickDate] = useState(new Date().toISOString().split('T')[0]);
-  const [quickSlots, setQuickSlots] = useState([]);
+  const [quickDate, setQuickDate] = useState(() => localDateInput());
+  const [quickSlots, setQuickSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slotError, setSlotError] = useState('');
+  const slotsRequest = useRef(0);
+  const [editSlots, setEditSlots] = useState(null);
+  const [editSlotsLoading, setEditSlotsLoading] = useState(false);
+  const [editSlotsError, setEditSlotsError] = useState('');
+  const editSlotsRequest = useRef(0);
   const [form, setForm] = useState({
     title: '',
     description: '',
     appointment_date: '',
     appointment_time: '',
+    starts_at: '',
     notes: ''
   });
 
   useEffect(() => {
     loadAppointments();
   }, [selectedMonth]);
+
+  useEffect(() => () => { slotsRequest.current++; }, []);
+
+  useEffect(() => {
+    if (!showModal || !form.appointment_date) return undefined;
+    const request = ++editSlotsRequest.current;
+    setEditSlots(null);
+    setEditSlotsError('');
+    setEditSlotsLoading(true);
+    getAvailableSlots(form.appointment_date, editingAppointment?.id)
+      .then(data => {
+        const available = availableSlots(data);
+        if (request === editSlotsRequest.current) setEditSlots(available);
+      })
+      .catch(error => {
+        if (request === editSlotsRequest.current) setEditSlotsError(slotErrorMessage(error));
+      })
+      .finally(() => {
+        if (request === editSlotsRequest.current) setEditSlotsLoading(false);
+      });
+    return () => { editSlotsRequest.current++; };
+  }, [showModal, form.appointment_date, editingAppointment?.id]);
 
   const loadAppointments = async () => {
     try {
@@ -44,7 +81,7 @@ const Appointments = () => {
         setSelectedMonth(monthFromFirstAppointment);
       } else if (!selectedMonth && appointmentsList.length === 0) {
         // Si no hay citas, usar el mes actual
-        setSelectedMonth(new Date().toISOString().slice(0, 7));
+        setSelectedMonth(localMonthInput());
       }
       
       // Load pending changes for all appointments
@@ -59,15 +96,21 @@ const Appointments = () => {
   };
 
   const loadAvailableSlots = async (date) => {
+    const request = ++slotsRequest.current;
     setLoadingSlots(true);
+    setQuickSlots(null);
+    setSlotError('');
     try {
       const slots = await getAvailableSlots(date);
-      setQuickSlots(Array.isArray(slots) ? slots : []);
+      const available = availableSlots(slots);
+      if (request === slotsRequest.current) setQuickSlots(available);
     } catch (error) {
-      console.error('Error loading available slots:', error?.message);
-      setQuickSlots([]);
+      if (request === slotsRequest.current) {
+        console.error('Error loading available slots:', error?.message);
+        setSlotError(slotErrorMessage(error));
+      }
     } finally {
-      setLoadingSlots(false);
+      if (request === slotsRequest.current) setLoadingSlots(false);
     }
   };
 
@@ -135,7 +178,7 @@ const Appointments = () => {
       closeModal();
     } catch (error) {
       console.error('Error saving appointment:', error?.message);
-      alert('Error al guardar la cita');
+      alert(error?.response?.status === 409 ? slotErrorMessage(error) : 'Error al guardar la cita');
     }
   };
 
@@ -170,6 +213,7 @@ const Appointments = () => {
         description: appointment.description,
         appointment_date: appointment.appointment_date,
         appointment_time: appointment.appointment_time,
+        starts_at: appointment.starts_at || '',
         notes: appointment.notes
       });
     } else {
@@ -186,14 +230,15 @@ const Appointments = () => {
     setShowModal(true);
   };
 
-  const handleSelectSlot = (date, time) => {
+  const handleSelectSlot = (date, slot) => {
     // Prefill form with selected date/time and open modal
     setEditingAppointment(null);
     setForm({
       title: 'Consulta con nutricionista',
       description: '',
       appointment_date: date,
-      appointment_time: time,
+      appointment_time: slot.start_time,
+      starts_at: slot.starts_at,
       notes: ''
     });
     setSelectedDate(date);
@@ -234,7 +279,7 @@ const Appointments = () => {
     for (let day = 1; day <= daysInMonth; day++) {
       const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const dayAppointments = getAppointmentsForDate(date);
-      const isToday = date === new Date().toISOString().split('T')[0];
+      const isToday = date === localDateInput();
 
       days.push(
         <div 
@@ -269,21 +314,13 @@ const Appointments = () => {
   };
 
   const getHistory = () => {
-    const now = new Date().toISOString();
-    return appointments.filter(apt => 
-      `${apt.appointment_date} ${apt.appointment_time}` < now
-    ).sort((a, b) => 
-      `${b.appointment_date} ${b.appointment_time}`.localeCompare(`${a.appointment_date} ${a.appointment_time}`)
-    );
+    return appointments.filter(apt => aptTimestamp(apt) !== null && aptTimestamp(apt) < Date.now())
+      .sort((a, b) => aptTimestamp(b) - aptTimestamp(a));
   };
 
   const getUpcoming = () => {
-    const now = new Date().toISOString();
-    return appointments.filter(apt => 
-      `${apt.appointment_date} ${apt.appointment_time}` >= now && apt.status === 'scheduled'
-    ).sort((a, b) => 
-      `${a.appointment_date} ${a.appointment_time}`.localeCompare(`${b.appointment_date} ${b.appointment_time}`)
-    );
+    return appointments.filter(apt => aptTimestamp(apt) !== null && aptTimestamp(apt) >= Date.now() && apt.status === 'scheduled')
+      .sort((a, b) => aptTimestamp(a) - aptTimestamp(b));
   };
 
   const getMonthStats = () => {
@@ -334,7 +371,13 @@ const Appointments = () => {
               <input
                 type="date"
                 value={quickDate}
-                onChange={(e) => setQuickDate(e.target.value)}
+                onChange={(e) => {
+                  slotsRequest.current++;
+                  setQuickDate(e.target.value);
+                  setQuickSlots(null);
+                  setLoadingSlots(false);
+                  setSlotError('');
+                }}
               />
               <button className="qs-search" onClick={() => loadAvailableSlots(quickDate)}>
                 Ver horarios
@@ -343,22 +386,26 @@ const Appointments = () => {
           </div>
           <div className="qs-slots">
             {loadingSlots && <div className="qs-loading">Cargando horarios...</div>}
-            {!loadingSlots && quickSlots.length === 0 && (
+            {slotError && <div role="alert">{slotError}</div>}
+            {!loadingSlots && quickSlots && quickSlots.length === 0 && (
               <div className="qs-empty">No hay horarios disponibles para esta fecha</div>
             )}
-            {!loadingSlots && quickSlots.length > 0 && (
+            {!loadingSlots && quickSlots && quickSlots.length > 0 && (
+              <>
+              <p>Hora del profesional: {quickSlots[0].time_zone}</p>
               <div className="qs-slot-grid">
-                {quickSlots.map((slot, idx) => (
+                {quickSlots.map((slot) => (
                   <button
-                    key={idx}
+                    key={slot.starts_at}
                     className="qs-slot"
                     onClick={() => handleSelectSlot(quickDate, slot)}
-                    title={`Reservar ${slot}`}
+                    title={`Reservar ${slotLabel(slot)}`}
                   >
-                    {slot}
+                    {slotLabel(slot)}
                   </button>
                 ))}
               </div>
+              </>
             )}
           </div>
         </div>
@@ -383,7 +430,7 @@ const Appointments = () => {
                   <div className="date-box proposed">
                     <span className="date-label">Nueva Propuesta</span>
                     <span className="date-value">📅 {change.new_date}</span>
-                    <span className="time-value">🕐 {change.new_time}</span>
+                    <span className="time-value">🕐 {change.new_time} · {change.appointment.time_zone || 'zona por confirmar'}</span>
                   </div>
                 </div>
                 {change.reason && change.reason.trim() && (
@@ -602,17 +649,20 @@ const Appointments = () => {
                   <input
                     type="date"
                     value={form.appointment_date}
-                    onChange={(e) => setForm({ ...form, appointment_date: e.target.value })}
+                    onChange={(e) => setForm({ ...form, appointment_date: e.target.value, appointment_time: '', starts_at: '' })}
                   />
                 </div>
 
                 <div className="form-group">
-                  <label>Hora *</label>
-                  <input
-                    type="time"
-                    value={form.appointment_time}
-                    onChange={(e) => setForm({ ...form, appointment_time: e.target.value })}
-                  />
+                  <label>Horarios disponibles *</label>
+                  {editSlotsLoading && <p role="status">Cargando horarios…</p>}
+                  {editSlotsError && <p role="alert">{editSlotsError}</p>}
+                  {editSlots?.length === 0 && <p>No hay horarios disponibles para esta fecha.</p>}
+                  {editSlots?.map(slot => <button key={slot.starts_at} type="button"
+                    className={form.starts_at === slot.starts_at ? 'qs-slot selected' : 'qs-slot'}
+                    onClick={() => setForm(current => ({ ...current, appointment_time: slot.start_time, starts_at: slot.starts_at }))}>
+                    {slotLabel(slot)}
+                  </button>)}
                 </div>
               </div>
 
@@ -632,7 +682,7 @@ const Appointments = () => {
               <button 
                 className="btn-save" 
                 onClick={handleCreateAppointment}
-                disabled={!form.title || !form.appointment_date || !form.appointment_time}
+                disabled={!form.title || !form.appointment_date || !form.appointment_time || !form.starts_at || editSlotsLoading}
               >
                 {editingAppointment ? 'Actualizar' : 'Crear Cita'}
               </button>

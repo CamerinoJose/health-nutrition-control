@@ -1,15 +1,17 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { getAvailableSlots } from './api'
 import api from './api'
+import { availableSlots, localDateInput, slotErrorMessage, slotLabel } from './appointmentSlots'
 import './bookings.css'
 
 export default function BookAppointment({ onNavigate }) {
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-  const [slots, setSlots] = useState([])
+  const [date, setDate] = useState(() => localDateInput())
+  const [slots, setSlots] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [selectedSlot, setSelectedSlot] = useState('')
+  const [selectedSlot, setSelectedSlot] = useState(null)
+  const slotsRequest = useRef(0)
   const [form, setForm] = useState({
     title: 'Consulta con nutricionista',
     description: '',
@@ -17,23 +19,29 @@ export default function BookAppointment({ onNavigate }) {
   })
 
   const loadSlots = async () => {
+    const request = ++slotsRequest.current
     setLoading(true)
     setError('')
     setSuccess('')
+    setSelectedSlot(null)
+    setSlots(null)
     try {
       const res = await getAvailableSlots(date)
-      setSlots(Array.isArray(res) ? res : [])
+      const available = availableSlots(res)
+      if (request === slotsRequest.current) setSlots(available)
     } catch (e) {
-      console.error('Error loading slots:', e)
-      setError('No pudimos cargar horarios disponibles')
-      setSlots([])
+      if (request === slotsRequest.current) {
+        console.error('Error loading slots:', e.message)
+        setError(slotErrorMessage(e))
+      }
     } finally {
-      setLoading(false)
+      if (request === slotsRequest.current) setLoading(false)
     }
   }
 
   useEffect(() => {
     loadSlots()
+    return () => { slotsRequest.current++ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -50,13 +58,16 @@ export default function BookAppointment({ onNavigate }) {
         description: form.description,
         notes: form.notes,
         appointment_date: date,
-        appointment_time: selectedSlot
+        appointment_time: selectedSlot.start_time,
+        starts_at: selectedSlot.starts_at
       })
       setSuccess('Cita creada correctamente')
       setTimeout(() => onNavigate ? onNavigate('appointments') : null, 600)
     } catch (e) {
-      console.error('Error creating appointment:', e)
-      setError('No se pudo crear la cita')
+      console.error('Error creating appointment:', e?.response?.status || e.message)
+      setError(e?.response?.status === 409
+        ? slotErrorMessage(e)
+        : 'No se pudo crear la cita')
     }
   }
 
@@ -70,7 +81,15 @@ export default function BookAppointment({ onNavigate }) {
       <div className="booking-controls">
         <label>
           Fecha
-          <input type="date" value={date} onChange={(e)=> setDate(e.target.value)} />
+          <input type="date" value={date} onChange={(e) => {
+            slotsRequest.current++
+            setDate(e.target.value)
+            setSelectedSlot(null)
+            setSlots(null)
+            setLoading(false)
+            setError('')
+            setSuccess('')
+          }} />
         </label>
         <button className="btn-primary" onClick={loadSlots}>Ver horarios</button>
       </div>
@@ -80,22 +99,25 @@ export default function BookAppointment({ onNavigate }) {
 
       <div className="slot-section">
         {loading && <div className="loading">Cargando horarios...</div>}
-        {!loading && slots.length === 0 && (
+        {!loading && !error && slots && slots.length === 0 && (
           <div className="empty">No hay horarios disponibles para esta fecha</div>
         )}
-        {!loading && slots.length > 0 && (
+        {!loading && slots && slots.length > 0 && (
+          <>
+          <p>Hora del profesional: {slots[0].time_zone}</p>
           <div className="slot-grid">
-            {slots.map((s, idx) => (
+            {slots.map((slot) => (
               <button
-                key={idx}
-                className={`slot ${selectedSlot === s ? 'selected' : ''}`}
-                onClick={() => setSelectedSlot(s)}
-                title={`Reservar ${s}`}
+                key={slot.starts_at}
+                className={`slot ${selectedSlot?.starts_at === slot.starts_at ? 'selected' : ''}`}
+                onClick={() => setSelectedSlot(slot)}
+                title={`Reservar ${slotLabel(slot)}`}
               >
-                {s}
+                {slotLabel(slot)}
               </button>
             ))}
           </div>
+          </>
         )}
       </div>
 

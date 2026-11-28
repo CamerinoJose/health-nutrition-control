@@ -1,5 +1,23 @@
 # Automatización de pruebas
 
+## Estado al detenerse — 2026-11-27
+
+Las suites locales pasaron con los cambios todavía sin publicar (verificación
+actualizada el 2026-11-27):
+
+- Backend: `go test -count=1 ./...` contra PostgreSQL temporal aislado y
+  `go vet ./...`.
+- Web: `npm.cmd test -- --run`, 90 pruebas; `npm.cmd run build` pasó con
+  advertencia de tamaño de bundle.
+- Móvil: `npm.cmd test -- --runInBand`, 179 pruebas; `npx.cmd expo export
+  --platform android` generó el bundle y `gradlew.bat assembleDebug` compiló
+  el APK debug. El APK no se instaló.
+
+Playwright aprobó 2 pruebas smoke de landing y validación vacía de login; no
+cubre los flujos completos de agenda. Esto no reemplaza pruebas físicas,
+Maestro ni una comprobación integral en teléfono. La instancia PostgreSQL temporal usada para la suite se
+detuvo y eliminó; no se usó la base de producción ni el clúster anterior.
+
 ## Web
 
 ```powershell
@@ -42,6 +60,9 @@ agregues usuarios reales, PDFs médicos reales ni secretos a los archivos.
   reiniciar el teléfono; revisar también los permisos de Android.
 - [ ] Agendar con fecha y hora, verificar el error sin profesional asignado y
   comprobar que una falla de conexión no se muestra como una lista vacía.
+- [ ] Resolver en web y móvil horas antiguas repetidas, inexistentes o
+  inválidas con datos ficticios; verificar que las reasignaciones y citas sin
+  profesional no aparecen en la vista previa ni se convierten.
 
 ## Pruebas de profesionales — pendientes
 
@@ -70,9 +91,10 @@ dispositivo, versión, build y resultado sin incluir información personal.
 - [ ] Definir el rol de doctor y sus permisos antes de probarlo; no asumir que
   ya existe ni que es equivalente al rol de nutriólogo.
 
-**Estado:** las restricciones y pruebas automatizadas están solo en el código
-local; aún deben desplegarse y probarse en un entorno aislado. No usar cuentas
-profesionales con datos reales hasta completar esas pruebas.
+**Estado:** las restricciones y sus pruebas automatizadas se publicaron en
+`1ba8d7d`. La navegación profesional móvil mejorada sigue local y no está en
+el APK instalado. Falta validar los flujos completos en un entorno aislado;
+no usar cuentas profesionales con datos reales hasta completar esas pruebas.
 
 Los mensajes anteriores a la migración no registran el rol de los participantes
 en el momento del envío. Por privacidad quedan temporalmente inaccesibles sin
@@ -91,6 +113,35 @@ cuenta administradora son conversaciones iniciadas expresamente.
 - [ ] Verificar en entorno aislado que eliminar la cuenta elimina también sus
   comentarios. No incluir datos de salud en las pruebas.
 
+### Disponibilidad y choques de citas — pendientes
+
+Las reglas están parcialmente implementadas y probadas de forma automatizada
+en cambios locales, pero no publicadas ni validadas de extremo a extremo.
+Usar cuentas ficticias, duración de 30 minutos y probar `America/Mexico_City`
+y otras zonas.
+
+La suite local cubre reservas simultáneas, cancelación, archivado, propuestas,
+horas repetidas y ausentes, confirmación de zona antigua y una comprobación de
+recordatorios por instante. Aún falta probar el flujo completo y, en particular,
+resolver en la interfaz las citas antiguas ambiguas o inválidas.
+
+- [ ] El profesional configura su zona, horario semanal y excepciones por fecha;
+  consultar meses futuros y no permitir citas fuera de los horarios vigentes.
+- [ ] Rechazar solapamientos del mismo profesional, incluso ante solicitudes
+  simultáneas; permitir horarios independientes entre profesionales.
+- [ ] Comprobar creación, edición, cambios propuestos y aceptados y estados,
+  incluidos límites entre intervalos.
+- [ ] Verificar que archivar una cita no libera su horario.
+- [ ] Verificar que una cancelación libera el horario y que una excepción no
+  mueve citas existentes, aunque reduzca el horario disponible.
+- [ ] El paciente ve la hora del profesional. Cambiar la zona del profesional
+  conserva el instante de las citas y convierte sus horas; probar también
+  transiciones de horario de verano y citas antiguas sin zona registrada.
+  El profesional debe confirmar la zona de las citas antiguas antes de
+  convertirlas; no inferirla de la configuración nueva.
+- [ ] Confirmar que pacientes y profesionales solo ven y cambian las citas
+  que les corresponden, incluso después de una reasignación.
+
 ## CI
 
 GitHub Actions ejecuta:
@@ -98,4 +149,5 @@ GitHub Actions ejecuta:
 - pruebas Go con PostgreSQL;
 - pruebas unitarias web y móvil;
 - Playwright en Chromium;
-- compilación Android y Maestro sobre un emulator.
+- compilación Android y Maestro sobre un emulador solo bajo demanda, no en
+  cada push. En CI de `7978201` Android E2E se omitió.

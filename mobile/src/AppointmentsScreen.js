@@ -19,7 +19,20 @@ import api from './api';
 
 const pad = value => String(value).padStart(2, '0');
 const formatDate = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-const formatTime = date => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+
+function availableSlots(data) {
+  if (!Array.isArray(data) || data.some(slot =>
+    !slot || typeof slot.start_time !== 'string' ||
+    !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(slot.start_time) ||
+    typeof slot.available !== 'boolean' || typeof slot.starts_at !== 'string' ||
+    Number.isNaN(Date.parse(slot.starts_at)) || typeof slot.time_zone !== 'string' ||
+    !slot.time_zone || typeof slot.utc_offset !== 'string' ||
+    !/^[+-]\d{2}:\d{2}$/.test(slot.utc_offset)
+  )) {
+    throw new Error('Invalid appointment slots response');
+  }
+  return data.filter(slot => slot.available);
+}
 
 function localAppointmentDate(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
@@ -29,6 +42,8 @@ function localAppointmentDate(value) {
 export default function AppointmentsScreen({ onNavigate }) {
   const { t } = useTranslation();
   const [appointments, setAppointments] = useState([]);
+  const [pendingChanges, setPendingChanges] = useState([]);
+  const [changesLoadError, setChangesLoadError] = useState(false);
   const [archivedAppointments, setArchivedAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -38,11 +53,17 @@ export default function AppointmentsScreen({ onNavigate }) {
   const [showModal, setShowModal] = useState(false);
   const [picker, setPicker] = useState(null);
   const [pickerDate, setPickerDate] = useState(new Date());
+  const [slots, setSlots] = useState(null);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsError, setSlotsError] = useState('');
+  const [slotsRevision, setSlotsRevision] = useState(0);
+  const slotsRequest = useRef(0);
   const [form, setForm] = useState({
     title: '',
     description: '',
     appointment_date: '',
     appointment_time: '',
+    starts_at: '',
     notes: ''
   });
   const [selectedMonth, setSelectedMonth] = useState(formatDate(new Date()).slice(0, 7));
@@ -51,13 +72,54 @@ export default function AppointmentsScreen({ onNavigate }) {
     loadAppointments();
   }, [selectedMonth]);
 
+  useEffect(() => {
+    if (!showModal || !form.appointment_date) return;
+    const request = ++slotsRequest.current;
+    setSlotsLoading(true);
+    setSlots(null);
+    setSlotsError('');
+    api.get('/available-slots', { params: { date: form.appointment_date } })
+      .then(response => {
+        const available = availableSlots(response.data);
+        if (request === slotsRequest.current) setSlots(available);
+      })
+      .catch(error => {
+        if (request !== slotsRequest.current) return;
+        const code = error?.response?.data?.code;
+        const needsProfessional = error?.response?.data?.error === 'no nutritionist assigned';
+        setSlotsError(needsProfessional
+          ? 'Primero asigna un nutriólogo a tu cuenta para poder agendar.'
+          : code === 'schedule_not_configured' || code === 'legacy_zone_required'
+            ? 'El profesional debe configurar su agenda y confirmar su zona horaria.'
+            : 'No se pudieron cargar los horarios. Revisa tu conexión.');
+      })
+      .finally(() => {
+        if (request === slotsRequest.current) setSlotsLoading(false);
+      });
+    return () => { slotsRequest.current++; };
+  }, [showModal, form.appointment_date, slotsRevision]);
+
   const loadAppointments = async () => {
     try {
       setLoading(true);
       // Load active appointments
       const activeUrl = `/appointments?month=${selectedMonth}`;
       const activeResponse = await api.get(activeUrl);
-      setAppointments(activeResponse.data || []);
+      const active = Array.isArray(activeResponse.data) ? activeResponse.data : [];
+      setAppointments(active);
+      setChangesLoadError(false);
+      const changesByAppointment = await Promise.all(active.map(async appointment => {
+        try {
+          const response = await api.get(`/appointment-changes/${appointment.id}`);
+          return (Array.isArray(response.data) ? response.data : [])
+            .filter(change => change.status === 'pending')
+            .map(change => ({ ...change, appointment }));
+        } catch {
+          setChangesLoadError(true);
+          return [];
+        }
+      }));
+      setPendingChanges(changesByAppointment.flat());
       
       // Load archived appointments
       const archivedUrl = `/appointments?archived=true`;
@@ -72,10 +134,26 @@ export default function AppointmentsScreen({ onNavigate }) {
     }
   };
 
+  const respondToChange = async (change, accept) => {
+    try {
+      await api.put(`/appointment-changes/${change.id}/${accept ? 'accept' : 'reject'}`, accept ? undefined : { reason: '' });
+      Alert.alert('Cita actualizada', accept ? 'Se aceptó el cambio de horario.' : 'Se rechazó el cambio de horario.');
+      await loadAppointments();
+    } catch (error) {
+      Alert.alert('No se pudo responder', error?.response?.status === 409
+        ? 'Ese horario dejó de estar disponible. Contacta a tu profesional para recibir otra propuesta.'
+        : 'Revisa tu conexión e inténtalo de nuevo.');
+    }
+  };
+
   const handleCreateAppointment = async () => {
     if (submittingRef.current) return;
-    if (!form.title.trim() || !form.appointment_date || !form.appointment_time) {
+    if (!form.title.trim() || !form.appointment_date || !form.appointment_time || !form.starts_at) {
       Alert.alert('Error', 'Completa los campos requeridos');
+      return;
+    }
+    if (slotsLoading || !slots?.some(slot => slot.starts_at === form.starts_at)) {
+      Alert.alert('Error', 'Selecciona un horario disponible.');
       return;
     }
 
@@ -90,13 +168,19 @@ export default function AppointmentsScreen({ onNavigate }) {
         setSelectedMonth(month);
       }
       setShowModal(false);
-      setForm({ title: '', description: '', appointment_date: '', appointment_time: '', notes: '' });
+      setForm({ title: '', description: '', appointment_date: '', appointment_time: '', starts_at: '', notes: '' });
       Alert.alert('Éxito', 'Cita creada correctamente');
     } catch (error) {
       console.error('Error creating appointment:', error);
       const needsNutritionist = error.response?.data?.error === 'please assign a nutritionist before booking';
+      const conflict = error.response?.status === 409;
+      if (conflict) {
+        setForm(current => ({ ...current, appointment_time: '', starts_at: '' }));
+        setSlotsRevision(current => current + 1);
+      }
       Alert.alert('Error', needsNutritionist
         ? 'Primero asigna un nutriólogo a tu cuenta para poder agendar.'
+        : conflict ? 'El horario ya no está disponible. Consulta los horarios actualizados.'
         : 'No se pudo crear la cita. Revisa tu conexión y vuelve a intentarlo.');
     } finally {
       submittingRef.current = false;
@@ -110,10 +194,6 @@ export default function AppointmentsScreen({ onNavigate }) {
       const selectedDate = localAppointmentDate(form.appointment_date);
       value.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
     }
-    if (form.appointment_time) {
-      const [hours, minutes] = form.appointment_time.split(':').map(Number);
-      value.setHours(hours, minutes, 0, 0);
-    }
     setPickerDate(value);
     setPicker(mode);
   };
@@ -122,16 +202,21 @@ export default function AppointmentsScreen({ onNavigate }) {
     if (Platform.OS !== 'ios') setPicker(null);
     if (event.type === 'dismissed' || !chosen) return;
     setPickerDate(chosen);
-    setForm(current => ({
-      ...current,
-      [picker === 'date' ? 'appointment_date' : 'appointment_time']:
-        picker === 'date' ? formatDate(chosen) : formatTime(chosen),
-    }));
+    selectDate(chosen);
+  };
+
+  const selectDate = chosen => {
+    const date = formatDate(chosen);
+    if (date === form.appointment_date) return;
+    setSlots(null);
+    setForm(current => ({ ...current, appointment_date: date, appointment_time: '', starts_at: '' }));
   };
 
   const closeModal = () => {
     setPicker(null);
     setShowModal(false);
+    setSlots(null);
+    setForm(current => ({ ...current, appointment_time: '', starts_at: '' }));
   };
 
   const handleDeleteAppointment = async (id) => {
@@ -182,7 +267,7 @@ export default function AppointmentsScreen({ onNavigate }) {
         📅 {localAppointmentDate(item.appointment_date).toLocaleDateString('es-ES')}
       </Text>
       {item.appointment_time && (
-        <Text style={styles.appointmentTime}>🕐 {item.appointment_time}</Text>
+        <Text style={styles.appointmentTime}>🕐 {item.appointment_time}{item.time_zone ? ` · ${item.time_zone}` : ' · Zona por confirmar'}</Text>
       )}
       {item.description && (
         <Text style={styles.appointmentDesc}>{item.description}</Text>
@@ -240,6 +325,33 @@ export default function AppointmentsScreen({ onNavigate }) {
       {loadError && (
         <View>
           <Text accessibilityRole="alert">No se pudieron actualizar las citas. La lista puede estar incompleta.</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={loadAppointments}><Text>Reintentar</Text></TouchableOpacity>
+        </View>
+      )}
+
+      {activeTab === 'active' && pendingChanges.length > 0 && (
+        <View style={styles.pendingChanges}>
+          <Text style={styles.pendingTitle}>Cambios de cita pendientes</Text>
+          {pendingChanges.map(change => (
+            <View key={change.id} style={styles.pendingCard}>
+              <Text style={styles.appointmentTitle}>{change.appointment.title}</Text>
+              <Text>{change.new_date} · {change.new_time} ({change.appointment.time_zone || 'zona por confirmar'})</Text>
+              {change.reason ? <Text>{change.reason}</Text> : null}
+              <View style={styles.changeActions}>
+                <TouchableOpacity accessibilityRole="button" onPress={() => respondToChange(change, true)}>
+                  <Text style={styles.acceptChange}>Aceptar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity accessibilityRole="button" onPress={() => respondToChange(change, false)}>
+                  <Text style={styles.rejectChange}>Rechazar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+      {activeTab === 'active' && changesLoadError && (
+        <View style={styles.pendingChanges}>
+          <Text accessibilityRole="alert">No se pudieron revisar las propuestas de cambio.</Text>
           <TouchableOpacity accessibilityRole="button" onPress={loadAppointments}><Text>Reintentar</Text></TouchableOpacity>
         </View>
       )}
@@ -311,17 +423,36 @@ export default function AppointmentsScreen({ onNavigate }) {
             </View>
 
             <View style={styles.formGroup}>
-              <Text style={styles.label}>Hora</Text>
-              <TouchableOpacity
-                style={styles.input}
-                accessibilityRole="button"
-                accessibilityLabel="Seleccionar hora"
-                onPress={() => openPicker('time')}
-              >
-                <Text style={!form.appointment_time && styles.placeholder}>
-                  {form.appointment_time || 'Seleccionar hora'}
-                </Text>
-              </TouchableOpacity>
+              <Text style={styles.label}>Horarios del profesional</Text>
+              {!form.appointment_date && <Text>Selecciona una fecha para consultar horarios.</Text>}
+              {slotsLoading && <ActivityIndicator />}
+              {!!slotsError && (
+                <View>
+                  <Text accessibilityRole="alert">{slotsError}</Text>
+                  <TouchableOpacity accessibilityRole="button" onPress={() => setSlotsRevision(current => current + 1)}>
+                    <Text>Reintentar horarios</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              {slots && slots.length === 0 && <Text>No hay horarios disponibles para esta fecha.</Text>}
+              {slots && slots.length > 0 && (
+                <View>
+                  <Text>Zona del profesional: {slots[0].time_zone}</Text>
+                  {slots.map(slot => (
+                    <TouchableOpacity
+                      key={slot.starts_at}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: form.starts_at === slot.starts_at }}
+                      style={styles.input}
+                      onPress={() => setForm(current => ({
+                        ...current, appointment_time: slot.start_time, starts_at: slot.starts_at,
+                      }))}
+                    >
+                      <Text>{slot.start_time} (UTC{slot.utc_offset})</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
 
             {picker && (
@@ -336,11 +467,7 @@ export default function AppointmentsScreen({ onNavigate }) {
                 />
                 {Platform.OS === 'ios' && (
                   <TouchableOpacity onPress={() => {
-                    setForm(current => ({
-                      ...current,
-                      [picker === 'date' ? 'appointment_date' : 'appointment_time']:
-                        picker === 'date' ? formatDate(pickerDate) : formatTime(pickerDate),
-                    }));
+                    selectDate(pickerDate);
                     setPicker(null);
                   }}>
                     <Text>Listo</Text>
@@ -436,6 +563,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     paddingVertical: 15,
   },
+  pendingChanges: {
+    backgroundColor: '#fff7ed',
+    borderColor: '#fdba74',
+    borderWidth: 1,
+    borderRadius: 10,
+    marginHorizontal: 15,
+    marginTop: 12,
+    padding: 12,
+  },
+  pendingTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#9a3412',
+    marginBottom: 8,
+  },
+  pendingCard: {
+    borderTopWidth: 1,
+    borderTopColor: '#fed7aa',
+    paddingVertical: 10,
+    gap: 5,
+  },
+  changeActions: {
+    flexDirection: 'row',
+    gap: 24,
+    paddingTop: 6,
+  },
+  acceptChange: { color: '#15803d', fontWeight: 'bold' },
+  rejectChange: { color: '#b91c1c', fontWeight: 'bold' },
   appointmentCard: {
     backgroundColor: '#fff',
     borderRadius: 10,

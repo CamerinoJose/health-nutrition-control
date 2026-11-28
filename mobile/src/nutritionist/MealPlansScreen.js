@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { 
   View, Text, ScrollView, TouchableOpacity, TextInput, 
   ActivityIndicator, StyleSheet, Alert, RefreshControl, Modal 
@@ -14,12 +14,14 @@ export default function MealPlansScreen({ onNavigate }) {
   const [patients, setPatients] = useState([])
   const [selectedPatient, setSelectedPatient] = useState(null)
   const [currentPlan, setCurrentPlan] = useState(null)
+  const [loadingPlan, setLoadingPlan] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [planName, setPlanName] = useState('')
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0])
   const [snacks, setSnacks] = useState('')
   const [meals, setMeals] = useState({})
   const [error, setError] = useState('')
+  const planRequest = useRef(0)
 
   useEffect(() => {
     loadPatients()
@@ -37,23 +39,34 @@ export default function MealPlansScreen({ onNavigate }) {
       }
     } catch (e) {
       setError('Error al cargar pacientes')
-      console.error(e)
+      console.error('[MealPlans] Could not load patients')
     } finally {
       setLoading(false)
     }
   }
 
   const selectPatient = async (patient) => {
+    const request = ++planRequest.current
     setSelectedPatient(patient)
     setCurrentPlan(null)
+    setError('')
+    setLoadingPlan(true)
     
     try {
       const res = await api.get(`/nutritionist/patients/${patient.id}/meal-plan`)
-      if (res.data) {
-        setCurrentPlan(res.data)
+      if (request !== planRequest.current) return
+      if (!res.data?.plan || !Array.isArray(res.data.meals)) {
+        throw new Error('Invalid meal plan response')
       }
+      setCurrentPlan({ ...res.data.plan, meals: res.data.meals })
     } catch (e) {
-      console.log('No current plan for patient')
+      if (request !== planRequest.current) return
+      if (e.response?.status !== 404 || e.response?.data?.error !== 'no meal plan found') {
+        setError('No se pudo cargar el plan de comidas')
+        console.error('[MealPlans] Could not load meal plan')
+      }
+    } finally {
+      if (request === planRequest.current) setLoadingPlan(false)
     }
   }
 
@@ -100,13 +113,13 @@ export default function MealPlansScreen({ onNavigate }) {
 
     try {
       const mealsList = []
-      DAYS.forEach((day, dayIdx) => {
+      DAYS.forEach(day => {
         MEAL_TYPES.forEach(mealType => {
           const key = `${day}_${mealType}`
           const mealData = meals[key]
           if (mealData && (mealData.name || mealData.ingredients)) {
             mealsList.push({
-              day_of_week: dayIdx,
+              day_of_week: day,
               meal_type: mealType,
               name: mealData.name || mealType,
               ingredients: mealData.ingredients || '',
@@ -136,7 +149,7 @@ export default function MealPlansScreen({ onNavigate }) {
         selectPatient(selectedPatient)
       }
     } catch (e) {
-      console.error(e)
+      console.error('[MealPlans] Could not create meal plan')
       Alert.alert('Error', 'No se pudo crear el plan')
     }
   }
@@ -200,7 +213,7 @@ export default function MealPlansScreen({ onNavigate }) {
             </View>
           )}
 
-          {!loading && selectedPatient && !currentPlan && (
+          {!loading && !loadingPlan && !error && selectedPatient && !currentPlan && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>📋 {selectedPatient.name} no tiene un plan activo</Text>
               <TouchableOpacity onPress={openCreateModal} style={styles.emptyButton}>
@@ -229,8 +242,8 @@ export default function MealPlansScreen({ onNavigate }) {
 
               <Text style={styles.sectionTitle}>Comidas de la semana:</Text>
               
-              {DAYS.map((day, dayIdx) => {
-                const dayMeals = currentPlan.meals?.filter(m => m.day_of_week === dayIdx) || []
+              {DAYS.map(day => {
+                const dayMeals = currentPlan.meals?.filter(m => m.day_of_week === day) || []
                 
                 if (dayMeals.length === 0) return null
 

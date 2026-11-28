@@ -162,8 +162,10 @@ export const setNutritionistAvailability = async (data) => {
   return res.data
 }
 
-export const getAvailableSlots = async (date) => {
-  const res = await api.get('/available-slots', { params: { date } })
+export const getAvailableSlots = async (date, appointmentId) => {
+  const params = { date }
+  if (appointmentId) params.appointment_id = appointmentId
+  const res = await api.get('/available-slots', { params })
   return res.data
 }
 

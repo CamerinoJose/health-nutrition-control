@@ -2,23 +2,152 @@
 
 Esta sección prevalece sobre los reportes históricos de abajo.
 
-## Para continuar en un chat nuevo — 2026-11-22
+## Continuidad y estado — 2026-11-27
 
-1. Abrir la carpeta `C:\Users\camer\git\health-nutrition-control` y pedir al
-   asistente que lea este archivo y `mobile\PERSISTENT_REMINDERS.md`. Un chat
-   nuevo no recibe necesariamente el historial anterior.
-2. Consultar el estado actual de la PR
-   https://github.com/CamerinoJose/health-nutrition-control/pull/7 y de Git
-   antes de actuar. El archivo de seguimiento contiene cambios **solo locales**;
-   la PR es pública, está en borrador y no incluye este documento.
-3. La copia local `main` está atrasada y tiene cambios sin confirmar. No hacer
-   reset, checkout destructivo ni sincronizar encima de ellos. La PR se preparó
-   en una copia separada sobre el código publicado, preservando la corrección
-   OAuth. Verificar la rama y el diff antes de continuar.
-4. Prioridad acordada: Android y web primero; iPhone después. La app aún no
-   está lista para publicarse ni para depender de ella para recordatorios médicos.
+Al retomar, leer este archivo, `ARQUITECTURA.md` y `TESTING_AUTOMATION.md`;
+comprobar la rama, los cambios locales, CI y el despliegue. Los informes
+anteriores de este archivo son históricos cuando contradicen esta sección.
+No descartar cambios ni publicar sin autorización. Android y web tienen
+prioridad; iOS queda para después. La app aún no está lista para Play Store ni
+para depender de ella para recordatorios médicos.
 
-### Siguientes pasos prioritarios
+### Punto de parada y reanudación
+
+El trabajo se detuvo a petición del usuario. Hay cambios **sin commit ni
+publicación** en `main`, incluidos archivos nuevos sin seguimiento. Permanecen
+en esta computadora; no están respaldados por GitHub. No descartarlos ni
+publicarlos sin autorización. La última versión publicada comprobada sigue
+siendo `7978201`. Se compiló un APK debug local, sin instalar ni publicar;
+antes de probarlo en teléfono hay que confirmar que `.env.local` apunte al
+backend aislado.
+
+Al retomar, empezar por revisar el diff completo y terminar la agenda antes de
+crear datos ficticios o preparar un APK:
+
+1. Resolver citas antiguas con horas ambiguas o inexistentes: la interfaz
+   ahora ofrece vista previa por registro y permite escoger la ocurrencia
+   repetida o confirmar un instante corregido en web y móvil. Falta validar el
+   flujo integral y definir cómo tratar citas antiguas sin profesional asignado.
+   La vista previa y la conversión se limitan a pacientes asignados actualmente.
+2. La configuración profesional, las reservas y las propuestas de cambio ya
+   tienen interfaz en web y móvil. Revisar rutas antiguas, órdenes de bloqueo,
+   reasignaciones y todas las acciones de edición antes de considerar lista la
+   agenda para publicación.
+3. Probar excepciones con citas existentes, migración ambigua, cambios de zona,
+   recordatorios, autorización, reasignaciones y concurrencia. Los recordatorios
+   locales de Android aún no están conectados automáticamente a las citas.
+4. Preparar un entorno aislado accesible desde el teléfono, crear profesionales
+   y pacientes ficticios y ejecutar la matriz de `TESTING_AUTOMATION.md`.
+5. Definir verificación profesional y permisos de doctor y secretaria;
+   recuperación de contraseña segura sigue pendiente. Solicitar autorización
+   antes de publicar y elegir explícitamente la API del APK de prueba.
+
+La base PostgreSQL aislada de pruebas está detenida, no borrada, en
+`C:\Users\camer\.copilot\session-state\820b99e2-0108-4d0e-8033-f9cf7e3bd4d1\files\agenda-test-postgres`.
+Es un entorno local con datos ficticios, separado de producción. No contiene un
+entorno accesible desde el teléfono. Revisar que el puerto de pruebas esté libre
+antes de volver a iniciarla.
+
+### Agenda local en curso
+
+- [x] Implementación local de intervalos de 30 minutos, horario semanal y
+  excepciones por profesional, con comprobación transaccional de choques.
+  Archivar no libera el horario; cancelar sí. No se ha revisado aún toda la
+  implementación ni completado la prueba de extremo a extremo.
+- [x] Zonas horarias por profesional, instantes explícitos y manejo de horas
+  repetidas o inexistentes en la disponibilidad; conversión de citas antiguas
+  condicionada a la confirmación de su zona. Web y móvil previsualizan las citas
+  antiguas, permiten escoger horas repetidas y confirmar un instante corregido.
+- [x] Pacientes web y móvil pueden seleccionar horarios devueltos por la API
+  con zona y desplazamiento UTC. Móvil incluye una primera pantalla para
+  configurar agenda y zona; la web también permite configurar horarios y
+  excepciones, revisar citas antiguas y proponer cambios con una hora inequívoca.
+- [x] El recordatorio del backend local compara el instante de la cita en vez
+  de la fecha del servidor; todavía falta probar el flujo completo y las
+  consecuencias de cambiar zona o reprogramar.
+- [x] Verificación local del 2026-11-27: backend completo con PostgreSQL
+  temporal aislado y `go vet`; 90 pruebas web y compilación; 179 pruebas
+  móviles, exportación del bundle Android y `assembleDebug` aprobado. No se
+  instaló el APK ni se realizó prueba física.
+
+### Hecho y publicado
+
+- [x] `f33e9a5`: `JWT_SECRET` obligatorio sin valor fijo, eliminación de
+  cuenta, política de privacidad, reportes de Gemini y otras protecciones.
+- [x] `1ba8d7d`: permisos clínicos por asignación, mensajes clínicos
+  restringidos, feedback, acceso a Recordatorios desde el menú, selectores de
+  fecha y hora, edad calculada desde la fecha de nacimiento y mejoras de
+  perfil, medicinas y citas. Las cuentas antiguas deben introducir su fecha
+  de nacimiento para calcular la edad.
+- [x] Feedback en móvil y web, con bandeja web para administradores, orden de
+  llegada, estados y reapertura. El feedback se elimina con la cuenta.
+- [x] El usuario confirmó el despliegue anterior y que pudo guardar datos.
+- [x] `7978201`: recuperación de contraseña insegura deshabilitada, sin
+  creación automática de cuentas predeterminadas. Las cuentas predeterminadas
+  conocidas y las cuentas configuradas que aún usan su contraseña
+  predeterminada anterior se bloquean sin borrar datos; sus sesiones dejan de
+  ser válidas. Las demás sesiones no se invalidan por esta medida.
+- [x] CI de `7978201` pasó backend, frontend, móvil y web E2E; Android E2E se
+  omitió. En Render se comprobó que la recuperación responde con el aviso
+  de servicio no disponible. El arranque y la migración se probaron dos veces
+  con PostgreSQL aislado, conservando una cuenta ajena.
+
+### Cambios móviles locales, todavía no publicados
+
+- [x] Inicio profesional según rol, accesos a pacientes, citas,
+  recomendaciones, planes y recetas, y protección de rutas en la interfaz.
+- [x] Eliminación de registros sensibles del panel; corrección de contratos de
+  planes y respuestas tardías que podían mostrar el paciente anterior.
+- [x] Pasaron 172 pruebas móviles y se compiló el bundle Android para estos
+  cambios. Aún falta probarlos físicamente y publicarlos con autorización.
+- El APK instalado apunta a la API de producción, usa firma de depuración y
+  **no incluye** estos cambios locales. Es solo para pruebas, no Play Store.
+
+### Pendientes inmediatos
+
+- [ ] Preparar un entorno aislado accesible desde el teléfono, separado de la
+  base de producción, y crear allí profesionales y pacientes ficticios.
+- [ ] Implementar y probar disponibilidad y choques de citas: duración de
+  30 minutos y solo horarios configurados por el profesional. La agenda debe
+  permitir consultar meses futuros, con horario semanal recurrente y
+  excepciones por fecha. Archivar no libera el horario; cancelar sí. Cubrir
+  creación, edición, cambios aceptados, estados y concurrencia. Hay trabajo
+  local parcial, pero todavía no está publicado ni verificado de extremo a
+  extremo; no asumir que la agenda desplegada cumple estas reglas.
+- [ ] Permitir que cada profesional configure su zona horaria. El paciente verá
+  la hora del profesional; las pruebas también deben cubrir zonas distintas y
+  cambios de horario. Si cambia la zona del profesional, conservar el instante
+  de las citas y convertir sus horas. Una excepción puede cerrar o recortar un
+  horario con citas existentes, sin moverlas. Para convertir citas anteriores
+  sin zona horaria registrada, pedir primero que el profesional confirme la
+  zona correspondiente; no asumirla ni borrar las citas.
+- [ ] Probar los flujos profesionales, reasignaciones y permisos clínicos
+  con la matriz de `TESTING_AUTOMATION.md`; no usar datos clínicos reales.
+- [ ] Publicar los cambios móviles cuando se autorice y generar un APK
+  adecuado al entorno elegido. Verificar explícitamente la API del build.
+- [ ] Definir la solicitud y verificación de identidad y cédula profesional
+  antes de conceder acceso; todavía no está implementada. Revisar la cédula
+  en el [Registro Nacional de Profesionistas](https://cedulaprofesional.sep.gob.mx/).
+- [ ] Diseñar roles de doctor y secretaria y sus permisos; no asumir que ya
+  existen ni que son equivalentes al rol de nutriólogo.
+- [ ] Implementar una recuperación de contraseña con verificación de
+  identidad; actualmente está deshabilitada.
+- [ ] Revisar de manera segura las cuentas y accesos potencialmente afectados
+  por el mecanismo anterior. La existencia de la falla no prueba explotación.
+
+### Inicio limpio antes de Play Store
+
+El usuario decidió no rotar claves ni borrar datos por ahora. Antes de publicar
+se acordó preparar cuentas nuevas y un entorno sin datos sensibles de prueba:
+
+- [ ] Definir y autorizar un plan para la base, cuentas, cachés locales,
+  archivos y respaldos, incluyendo retención y eliminación segura cuando
+  corresponda. No borrar datos existentes automáticamente.
+- [ ] Renovar las claves y secretos antes del inicio limpio; la rotación de
+  `JWT_SECRET` cerrará las sesiones actuales, pero no corrige contraseñas que
+  pudieran estar comprometidas. No registrar secretos ni datos reales.
+- [ ] Completar pruebas físicas, AAB firmado para distribución, declaraciones
+  de salud y seguridad de datos, permisos y requisitos de Play Console.
 
 ### Visión multifuncional acordada — plataforma integral de salud
 
@@ -29,9 +158,9 @@ aisladas por función. Los módulos compartidos son:
 - [ ] Identidad y roles: paciente, nutriólogo, familiar autorizado y administrador.
 - [ ] Iniciar pruebas de flujos de nutriólogo y doctor con datos ficticios:
   acceso, pacientes asignados, citas, notas y medicinas según permisos.
-- [ ] Bloqueador de privacidad: desplegar y verificar en entorno aislado los
-  permisos clínicos por asignación y los accesos indirectos implementados
-  localmente. No usar cuentas profesionales con datos reales antes de ello.
+- [ ] Verificar en entorno aislado los permisos clínicos por asignación y los
+  accesos indirectos ya publicados. No usar cuentas profesionales con datos
+  reales antes de completar estas pruebas.
 - [ ] Definir cómo verificar y recuperar mensajes anteriores a la migración:
   no se borran, pero quedan restringidos porque no consta el rol de cada
   participante cuando se enviaron.
@@ -63,14 +192,12 @@ Las comprobaciones médicas siempre deben permitir registrar datos sin
 presentarlos como diagnóstico. Las recomendaciones clínicas deben configurarse
 por el profesional correspondiente.
 
-## Registro maestro de continuidad — actualizar al retomar
+## Registro anterior de continuidad
 
-Esta sección debe prevalecer sobre ideas nuevas hasta completar el orden.
-Al iniciar una conversación futura, leer primero `TAREAS_PENDIENTES.md` y
-`ARQUITECTURA.md`, revisar GitHub Actions y no asumir que una versión móvil
-incluye cambios locales hasta verificar su commit y build.
+Se conserva como referencia histórica. La sección de continuidad del inicio
+prevalece sobre sus fechas, prioridades y estados.
 
-### Estado actual aprobado
+### Estado registrado anteriormente
 
 - [x] Plataforma Android y web confirmada como base.
 - [x] Backend Go con soporte PostgreSQL/Neon.
@@ -80,7 +207,7 @@ incluye cambios locales hasta verificar su commit y build.
 - [x] Copia de respuestas y historial local de Gemini implementados.
 - [x] Modo de pruebas implementado en móvil y web.
 - [x] CI base con Go/PostgreSQL, Jest, Vitest y Playwright.
-- [ ] CI Android/Maestro debe completar su corrección de firma/gradle.
+- [ ] Ejecutar CI Android/Maestro bajo demanda y validar el resultado.
 - [ ] Validar medicinas fija y ligada a comida en teléfono físico.
 - [ ] Validar notificaciones con app abierta, segundo plano, cerrada y reinicio.
 - [ ] Verificar citas, mensajes, progreso, recetas y perfil en web y móvil.
@@ -88,13 +215,13 @@ incluye cambios locales hasta verificar su commit y build.
 - [x] Auditoría nocturna automática: suites backend, móvil y web aprobadas.
 - [x] Backend corregido para IDs PostgreSQL reales en registro, mensajes,
   recetas, recomendaciones y cambios de cita.
-- [x] Citas corregidas para PostgreSQL: filtrado por mes, booleanos archivado
-  y disponibilidad real por nutriólogo.
+- [x] Citas corregidas para PostgreSQL: filtrado por mes y booleanos de
+  archivado. Disponibilidad y choques siguen pendientes según la sección vigente.
 - [x] Compilaciones backend, móvil debug y frontend de producción aprobadas.
 
-### Orden maestro acordado
+### Orden anterior de trabajo
 
-### Próximo bloque operativo — pruebas físicas Android
+### Pruebas físicas Android registradas anteriormente
 
 - [ ] Validar medicinas de hora fija con app abierta.
 - [ ] Validar medicinas ligadas a comidas.
@@ -167,9 +294,9 @@ incluye cambios locales hasta verificar su commit y build.
   automáticamente en cada push. Falta probar en dispositivo físico.
 
 Para retomar, el usuario puede escribir: «Continuemos BienestarApp. Lee
-TAREAS_PENDIENTES.md y revisa la PR #7 antes de hacer cambios».
+TAREAS_PENDIENTES.md y TESTING_AUTOMATION.md antes de hacer cambios».
 
-## Forma de trabajo acordada
+## Forma de trabajo registrada anteriormente
 
 Conversar con ChatGPT para decidir cómo continuar y preparar prompts concretos para Codex. Codex implementa y verifica los cambios de código. Cuando el usuario solicita un prompt, entregar el prompt sin ejecutar por cuenta propia la implementación descrita. Al retomar, revisar este archivo y actualizarlo con evidencia.
 
@@ -255,7 +382,7 @@ No hay recordatorios automáticos programados. Este archivo permite recuperar el
 - 2026-11-20: el usuario confirma que la app se actualizó y muestra «Version 0.1.0 build 10». Aún no confirma una respuesta real del chat Gemini.
 - 2026-09-26: el usuario confirmó que la APK ya permite guardar medicinas en el teléfono. El fallo de guardado inicial queda resuelto según su prueba. Esta confirmación no identifica por sí sola el commit activo de Render ni acredita cada escenario de pruebas.
 
-## Lista vigente en orden
+## Lista anterior en orden
 
 - [ ] 1. Confirmar el commit actual desplegado en Render y la conexión a PostgreSQL.
 - [x] 2a. Guardado de medicinas desde teléfono confirmado por el usuario el 2026-09-26.

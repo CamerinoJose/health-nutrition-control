@@ -1,5 +1,10 @@
 # Guía de Migración PostgreSQL
 
+> Guía histórica: no refleja la migración de agenda en desarrollo ni el estado
+> actual de producción. **No ejecutar los comandos destructivos de este
+> documento** sin un plan y autorización explícita. Consulta
+> `../TAREAS_PENDIENTES.md` antes de cualquier migración o limpieza de datos.
+
 ## Estado Actual
 - ✅ Tablas creadas en PostgreSQL
 - ✅ Algunos datos importados (users, recipes, health_profiles, nutritionist_availability, deleted_messages)

@@ -2,6 +2,14 @@
 
 API REST en Go (Gin) con autenticación JWT y PostgreSQL para el seguimiento de composición corporal.
 
+## Estado de continuidad
+
+La agenda con horarios, excepciones y zonas horarias está en desarrollo local,
+sin publicar y sin validación integral. Las citas antiguas requieren
+confirmación de zona y todavía falta resolver en interfaz las horas ambiguas.
+Consulta `../TAREAS_PENDIENTES.md` antes de migrar o desplegar; no apliques
+migraciones destructivas ni uses datos reales para pruebas.
+
 ## Inicio Rápido
 
 ### Requisitos Previos

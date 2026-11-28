@@ -980,6 +980,10 @@ function AppContent() {
           );
         }
 
+        if (view.startsWith('nutri-') && (!token || profile?.role !== 'nutritionist')) {
+          return <View style={{flex: 1, padding: 20}}><Text>{t('professionalAccessRequired')}</Text></View>
+        }
+
         if (view === 'nutri-patients') {
           return <NutritionistPatientsScreen onNavigate={navigate} />
         }

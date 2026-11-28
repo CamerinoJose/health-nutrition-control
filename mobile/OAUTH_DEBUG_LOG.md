@@ -1,5 +1,9 @@
 # OAuth Debug Log
 
+> Registro histórico de depuración, no instrucciones vigentes. La
+> configuración OAuth actual se documenta en `../backend/README.md` y los
+> pendientes del proyecto en `../TAREAS_PENDIENTES.md`.
+
 ## Test History
 
 1. **Initial mobile login**: Used useAuthRequest and promptAsync. Result: redirect_uri mismatch, backend received exp://...

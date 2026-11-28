@@ -2,6 +2,12 @@
 
 Proyecto inicial con Expo (recomendado) y soporte i18n (es / en).
 
+Los cambios locales de navegación profesional y agenda aún no están publicados
+ni incluidos en el APK instalado. El APK anterior usa la API de producción y
+firma de depuración; no es una versión para Play Store. Falta validar en
+dispositivo físico la nueva configuración profesional y los horarios. Consulta
+`../TAREAS_PENDIENTES.md` y `../TESTING_AUTOMATION.md`.
+
 Pasos rápidos para ejecutar:
 
 1. Instalar Expo CLI globalmente (si no lo tienes):
@@ -17,7 +23,9 @@ npm install
 npm start
 ```
 
-3. Usa Expo Go en tu teléfono o un emulador para ver la app.
+3. Usa una compilación de desarrollo en teléfono o emulador para probar
+   funciones nativas y notificaciones. Expo Go no cubre todas esas funciones;
+   consulta `EXPO_GO_DEPRECATED.md`.
 
 Notas:
 - Traducciones en `src/locales`.
